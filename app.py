@@ -69,9 +69,9 @@ with discover:
                 f"Search completed for {period}: {len(links)} PDF candidate(s) with matching month/year evidence."
             )
             st.info(
-                "Only PDF candidates whose URL, label, or nearby page text explicitly matches the selected month and year are shown. "
-                "A PDF without clear month/year evidence is omitted even if it appears after a selector change. "
-                "**Fund house hints are unverified**: open each PDF and confirm the AMC, scheme, factsheet month, "
+                "Only PDF candidates with explicit URL/label dates or a nearby context that uniquely identifies the selected month and year are shown. "
+                "Links in a container listing multiple months are omitted unless the URL or label itself identifies the selected period. "
+                "**Fund house hints remain unverified**: open the PDF and confirm the AMC, exact scheme, factsheet month, "
                 "and portfolio valuation date before analysis."
             )
             st.dataframe(
@@ -81,6 +81,7 @@ with discover:
                 column_config={
                     "fund_house_hint": st.column_config.TextColumn("Likely AMC / fund house"),
                     "fund_house_evidence": st.column_config.TextColumn("Why this was identified"),
+                    "period_evidence": st.column_config.TextColumn("Why month/year matched"),
                     "verification_status": st.column_config.TextColumn("Verification status"),
                     "url": st.column_config.LinkColumn("Open candidate URL"),
                     "source_context": st.column_config.TextColumn("Page context"),
