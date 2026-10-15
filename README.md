@@ -12,7 +12,8 @@ py -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
 pip install -r requirements.txt
-streamlit run app.py
+python -m playwright install chromium
+python -m streamlit run app.py
 ```
 
 macOS/Linux:
@@ -21,6 +22,7 @@ python -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
 pip install -r requirements.txt
+python -m playwright install chromium
 streamlit run app.py
 ```
 
