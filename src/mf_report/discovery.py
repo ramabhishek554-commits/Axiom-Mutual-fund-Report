@@ -688,6 +688,7 @@ def download_pdf(url: str, destination_dir: Path | None = None, session: request
     url = _is_https_url(url, AMFI_FACTSHEET_URL)
     if not url:
         raise ValueError("Only valid HTTPS download URLs are accepted.")
+    requested_url = url
     ensure_directories()
     target_dir = Path(destination_dir or RAW_DIR)
     target_dir.mkdir(parents=True, exist_ok=True)
@@ -696,6 +697,15 @@ def download_pdf(url: str, destination_dir: Path | None = None, session: request
         url, stream=True, timeout=HTTP_TIMEOUT_SECONDS, headers={"User-Agent": USER_AGENT}
     )
     response.raise_for_status()
+    final_url = str(getattr(response, "url", url) or url)
+    final_url = _is_https_url(final_url, url)
+    if not final_url:
+        try:
+            response.close()
+        except Exception:
+            pass
+        raise ValueError("Download redirected away from HTTPS; no file was saved.")
+    url = final_url
     content_type = response.headers.get("Content-Type", "").lower()
     chunks, size = [], 0
     for chunk in response.iter_content(chunk_size=64 * 1024):
@@ -717,7 +727,7 @@ def download_pdf(url: str, destination_dir: Path | None = None, session: request
     if not destination.exists():
         destination.write_bytes(content)
     record = {
-        "url": url, "file": str(destination), "bytes": size, "sha256": digest,
+        "requested_url": requested_url, "url": url, "file": str(destination), "bytes": size, "sha256": digest,
         "downloaded_at_utc": datetime.now(timezone.utc).isoformat(), "content_type": content_type,
     }
     manifest = PROCESSED_DIR / "download_manifest.json"
