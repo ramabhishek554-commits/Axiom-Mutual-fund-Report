@@ -206,6 +206,11 @@ with upload:
         "Extraction is heuristic. Upload a scheme-specific PDF. To prevent mislabelling, extraction stops if the chosen scheme "
         "cannot be found in page headings or the PDF appears to contain headings for multiple schemes. Review every extracted row."
     )
+    st.info(
+        "Rows start with instrument_type = Unclassified. In the review table, mark a row as Equity only when the PDF section "
+        "confirms it is an equity/equity-related holding; classify debt, cash and other instruments appropriately. "
+        "Unclassified rows are excluded from equity overlap and equity concentration calculations."
+    )
     pdf = st.file_uploader("Official AMC factsheet PDF", type=["pdf"], key="pdf")
     with st.form("pdf_metadata"):
         scheme = st.text_input("Exact scheme name")
@@ -270,6 +275,18 @@ with analyze:
         c.metric("Quality findings", len(issues))
         if not issues.empty:
             st.dataframe(issues, use_container_width=True, hide_index=True)
+        if "instrument_type" in valid.columns:
+            unclassified_mask = (
+                valid["instrument_type"].fillna("").astype(str).str.strip().str.lower()
+                .isin({"", "unclassified", "unknown", "nan", "none"})
+            )
+            unclassified_count = int(unclassified_mask.sum())
+            if unclassified_count:
+                st.warning(
+                    f"{unclassified_count} row(s) still have an unclassified instrument type. "
+                    "They remain visible in Holdings, but are excluded from equity-only overlap and concentration "
+                    "until you verify and classify them in Upload / review holdings."
+                )
         display = valid.copy()
         display["estimated_allocation_inr"] = display.weight_pct * amount / 100
         st.subheader("Holdings and illustrative allocation")
