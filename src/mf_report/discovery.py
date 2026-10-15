@@ -442,7 +442,11 @@ def _playwright_candidates(month: str, year: int) -> tuple[list[dict], int]:
                         if not clicked:
                             raise
                     page.wait_for_timeout(350)
-                    found.extend(_scan_page_and_frames(page, month, year))
+                    found.extend(
+                        _scan_page_and_frames(
+                            page, month, year, allow_generic_selected=True
+                        )
+                    )
                     cards_inspected += 1
 
                     # Inspect new tabs/popups opened by an AMC card before closing them.
@@ -450,7 +454,11 @@ def _playwright_candidates(month: str, year: int) -> tuple[list[dict], int]:
                         try:
                             popup.wait_for_load_state("domcontentloaded", timeout=5000)
                             popup.wait_for_timeout(300)
-                            found.extend(_scan_page_and_frames(popup, month, year))
+                            found.extend(
+                                _scan_page_and_frames(
+                                    popup, month, year, allow_generic_selected=True
+                                )
+                            )
                         except Exception:
                             LOG.debug("Could not inspect AMC popup for %r", name, exc_info=True)
                         finally:
@@ -469,7 +477,11 @@ def _playwright_candidates(month: str, year: int) -> tuple[list[dict], int]:
                     try:
                         if urlparse(page.url).hostname not in {"amfiindia.com", "www.amfiindia.com"}:
                             # Inspect the navigated AMC page before returning to AMFI.
-                            found.extend(_scan_page_and_frames(page, month, year))
+                            found.extend(
+                                _scan_page_and_frames(
+                                    page, month, year, allow_generic_selected=True
+                                )
+                            )
                             page.goto(AMFI_FACTSHEET_URL, wait_until="domcontentloaded", timeout=HTTP_TIMEOUT_SECONDS * 1000)
                             page.wait_for_timeout(250)
                     except Exception:
@@ -488,8 +500,10 @@ def _playwright_candidates(month: str, year: int) -> tuple[list[dict], int]:
 
 
 
-def _scan_page_and_frames(page, month: str, year: int) -> list[dict]:
-    """Scan the page and every accessible frame for dated links and selected-period PDFs."""
+def _scan_page_and_frames(
+    page, month: str, year: int, allow_generic_selected: bool = False
+) -> list[dict]:
+    """Scan a page and its frames; generic filenames require an activated AMC view."""
     found: list[dict] = []
     try:
         frames = list(page.frames)
@@ -501,6 +515,12 @@ def _scan_page_and_frames(page, month: str, year: int) -> list[dict]:
             found.extend(_dom_candidates(frame, month, year))
         except Exception:
             LOG.debug("Could not scan frame links", exc_info=True)
+
+        # On the initial AMFI landing page, do not select global controls and
+        # attribute all visible PDF anchors to that period. Only attempt generic
+        # filename matching after an AMC card was opened or an AMC page/popup loaded.
+        if not allow_generic_selected:
+            continue
         try:
             selected_period = _select_period_if_available(frame, month, year)
             if selected_period:
