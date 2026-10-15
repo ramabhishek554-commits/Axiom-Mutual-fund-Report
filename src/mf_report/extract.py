@@ -57,6 +57,7 @@ def validate_holdings(df):
                 "page":None,"validation_status":"needs_manual_review"}
     for c,v in defaults.items():
         if c not in rows: rows[c]=v
+    rows["valuation_date"] = rows["valuation_date"].fillna("").astype(str).str.strip()
     rows["weight_pct"] = pd.to_numeric(rows["weight_pct"],errors="coerce")
     rows["normalized_company"] = rows["company"].map(normalize_company)
     issues=[]
@@ -68,11 +69,41 @@ def validate_holdings(df):
     for i in rows.index[blank]:
         issues.append({"severity":"error","row":int(i)+2,"issue":"Company/issuer name is blank."})
         rows.loc[i,"validation_status"]="missing_company"
-    dup=rows.duplicated(["scheme","normalized_company"],keep=False) & ~invalid & ~blank
+    duplicate_keys = rows[["scheme", "normalized_company"]].copy()
+    if "valuation_date" in rows:
+        duplicate_keys["valuation_date"] = rows["valuation_date"].fillna("").astype(str).str.strip()
+    dup=duplicate_keys.duplicated(keep=False) & ~invalid & ~blank
     for i in rows.index[dup]:
-        issues.append({"severity":"warning","row":int(i)+2,"issue":"Duplicate normalized issuer in scheme; review before aggregation."})
-    for scheme,g in rows.loc[~invalid & ~blank].groupby("scheme"):
+        issues.append({
+            "severity":"warning",
+            "row":int(i)+2,
+            "issue":"Duplicate normalized issuer within the same scheme and valuation date; review before aggregation."
+        })
+
+    # Portfolio weights must be checked snapshot-by-snapshot. Summing several
+    # historical months together would create false >100% warnings.
+    group_cols = ["scheme", "valuation_date"] if "valuation_date" in rows else ["scheme"]
+    valid_rows = rows.loc[~invalid & ~blank]
+    for keys,g in valid_rows.groupby(group_cols, dropna=False):
+        if isinstance(keys, tuple):
+            scheme = keys[0]
+            valuation_date = str(keys[1] or "").strip()
+        else:
+            scheme, valuation_date = keys, ""
+        date_note = f" as of {valuation_date}" if valuation_date and valuation_date.lower() != "nan" else ""
         total=g.weight_pct.sum()
-        if total>100.5: issues.append({"severity":"warning","scheme":scheme,"issue":f"Reported weights sum to {total:.2f}%; check duplicate/mixed holdings."})
-        elif total<95: issues.append({"severity":"info","scheme":scheme,"issue":f"Reported weights sum to {total:.2f}%; portfolio may be partial."})
+        if total>100.5:
+            issues.append({
+                "severity":"warning",
+                "scheme":scheme,
+                "valuation_date":valuation_date,
+                "issue":f"Reported weights sum to {total:.2f}%{date_note}; check duplicate/mixed holdings."
+            })
+        elif total<95:
+            issues.append({
+                "severity":"info",
+                "scheme":scheme,
+                "valuation_date":valuation_date,
+                "issue":f"Reported weights sum to {total:.2f}%{date_note}; portfolio may be partial."
+            })
     return rows,pd.DataFrame(issues)
