@@ -57,6 +57,8 @@ with discover:
         ):
             st.session_state.pop(key, None)
         st.session_state["discovery_attempted"] = True
+        st.session_state["discovery_month"] = month
+        st.session_state["discovery_year"] = int(year)
         st.session_state["discovery_period"] = f"{month} {int(year)}"
         st.session_state["discovery_error"] = None
         try:
@@ -69,7 +71,15 @@ with discover:
     if st.session_state.get("discovery_attempted"):
         period = st.session_state.get("discovery_period", f"{month} {int(year)}")
         error = st.session_state.get("discovery_error")
-        if error:
+        searched_month = st.session_state.get("discovery_month", month)
+        searched_year = int(st.session_state.get("discovery_year", int(year)))
+        selection_matches_results = month == searched_month and int(year) == searched_year
+        if not selection_matches_results:
+            st.warning(
+                f"The selector now shows {month} {int(year)}, but these results are for {period}. "
+                "Click **Search AMFI page** again to refresh results before downloading."
+            )
+        elif error:
             st.error(f"AMFI discovery failed for {period}. Details: {error}")
             st.markdown(f"[Open the official AMFI factsheet page]({AMFI_FACTSHEET_URL})")
             st.info("You can continue by downloading a factsheet from the official AMC site and uploading the PDF in the next tab.")
