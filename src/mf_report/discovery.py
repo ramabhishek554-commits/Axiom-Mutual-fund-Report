@@ -320,8 +320,12 @@ def _payload_candidates(payload, month: str, year: int, source_url: str) -> list
                     has_fact_signal = "factsheet" in combined or "fact sheet" in combined
                     period_match, evidence = _period_evidence(url, key_label, context, month, year)
                     if not period_match and _json_month_year_fields_match(value, month, year):
-                        period_match = True
-                        evidence = "JSON month/year metadata fields match selected period"
+                        # Structured date fields are strong evidence only when they
+                        # do not contradict an explicit different period in the URL/label.
+                        explicit_link_text = f"{url} {key_label}"
+                        if not _context_has_competing_period(explicit_link_text, month, year):
+                            period_match = True
+                            evidence = "JSON month/year metadata fields match selected period"
                     if period_match and (has_pdf_signal or has_fact_signal):
                         record = _record(url, key_label or "Factsheet PDF", month, year, context, "amfi_json")
                         record["period_keyword_match"] = True
