@@ -199,8 +199,11 @@ def _playwright_candidates(month: str, year: int) -> tuple[list[dict], int]:
             except Exception:
                 page.wait_for_timeout(900)
 
-            found.extend(_dom_candidates(page, month, year))
-            headings = page.locator("h2, h3, h4, h5, h6").all_inner_texts()
+            found.extend(_scan_page_and_frames(page, month, year))
+            try:
+                headings = page.locator("h1, h2, h3, h4, h5, h6").all_inner_texts()
+            except Exception:
+                headings = []
             names = []
             for value in headings:
                 name = " ".join(value.split())
@@ -208,21 +211,63 @@ def _playwright_candidates(month: str, year: int) -> tuple[list[dict], int]:
                 if "mutual fund" in lowered and "factsheet" not in lowered and name not in names:
                     names.append(name)
 
-            # Links in these AMC cards may appear only after client-side interaction.
+            # Cards may be clickable only through a parent, modal, iframe, or popup.
             for name in names:
                 navigation_failed = False
                 try:
-                    page.get_by_text(name, exact=True).first.click(timeout=1600)
-                    page.wait_for_timeout(180)
-                    selected_period = _select_period_if_available(page, month, year)
-                    page.wait_for_timeout(250)
-                    found.extend(_dom_candidates(page, month, year))
-                    # Some AMCs use generic PDF filenames after month/year is selected.
-                    # Accept visible PDF links without date text only when both period
-                    # controls were explicitly matched and selected.
-                    if selected_period:
-                        found.extend(_dom_selected_period_pdfs(page, month, year))
+                    heading = page.get_by_text(name, exact=True).first
+                    target = heading
+                    for depth in range(1, 5):
+                        candidate = heading.locator("xpath=" + "/".join([".."] * depth))
+                        try:
+                            clickable = candidate.evaluate(
+                                """el => {
+                                  const style = getComputedStyle(el);
+                                  return ['A','BUTTON'].includes(el.tagName) ||
+                                    el.getAttribute('role') === 'button' ||
+                                    el.hasAttribute('onclick') ||
+                                    style.cursor === 'pointer' ||
+                                    !!el.querySelector('a[href],button,[role="button"]');
+                                }"""
+                            )
+                            if clickable:
+                                target = candidate
+                                break
+                        except Exception:
+                            continue
+
+                    existing_pages = set(context.pages)
+                    try:
+                        target.click(timeout=1600)
+                    except Exception:
+                        # A card's click handler is sometimes attached to its ancestor.
+                        clicked = False
+                        for depth in range(1, 5):
+                            try:
+                                heading.locator("xpath=" + "/".join([".."] * depth)).click(timeout=700)
+                                clicked = True
+                                break
+                            except Exception:
+                                continue
+                        if not clicked:
+                            raise
+                    page.wait_for_timeout(350)
+                    found.extend(_scan_page_and_frames(page, month, year))
                     cards_inspected += 1
+
+                    # Inspect new tabs/popups opened by an AMC card before closing them.
+                    for popup in [p for p in context.pages if p not in existing_pages and p is not page]:
+                        try:
+                            popup.wait_for_load_state("domcontentloaded", timeout=5000)
+                            popup.wait_for_timeout(300)
+                            found.extend(_scan_page_and_frames(popup, month, year))
+                        except Exception:
+                            LOG.debug("Could not inspect AMC popup for %r", name, exc_info=True)
+                        finally:
+                            try:
+                                popup.close()
+                            except Exception:
+                                pass
                 except Exception:
                     LOG.debug("Could not interact with AMFI card %r", name, exc_info=True)
                 finally:
@@ -233,7 +278,10 @@ def _playwright_candidates(month: str, year: int) -> tuple[list[dict], int]:
                         pass
                     try:
                         if urlparse(page.url).hostname not in {"amfiindia.com", "www.amfiindia.com"}:
+                            # Inspect the navigated AMC page before returning to AMFI.
+                            found.extend(_scan_page_and_frames(page, month, year))
                             page.goto(AMFI_FACTSHEET_URL, wait_until="domcontentloaded", timeout=HTTP_TIMEOUT_SECONDS * 1000)
+                            page.wait_for_timeout(250)
                     except Exception:
                         try:
                             page.goto(AMFI_FACTSHEET_URL, wait_until="domcontentloaded", timeout=HTTP_TIMEOUT_SECONDS * 1000)
@@ -247,6 +295,31 @@ def _playwright_candidates(month: str, year: int) -> tuple[list[dict], int]:
         finally:
             browser.close()
     return _deduplicate(found), cards_inspected
+
+
+
+def _scan_page_and_frames(page, month: str, year: int) -> list[dict]:
+    """Scan the page and every accessible frame for dated links and selected-period PDFs."""
+    found: list[dict] = []
+    try:
+        frames = list(page.frames)
+    except Exception:
+        frames = [page]
+
+    for frame in frames or [page]:
+        try:
+            found.extend(_dom_candidates(frame, month, year))
+        except Exception:
+            LOG.debug("Could not scan frame links", exc_info=True)
+        try:
+            selected_period = _select_period_if_available(frame, month, year)
+            if selected_period:
+                frame.wait_for_timeout(250)
+                found.extend(_dom_candidates(frame, month, year))
+                found.extend(_dom_selected_period_pdfs(frame, month, year))
+        except Exception:
+            LOG.debug("Could not inspect period selectors in frame", exc_info=True)
+    return _deduplicate(found)
 
 
 def _select_period_if_available(page, month: str, year: int) -> bool:
