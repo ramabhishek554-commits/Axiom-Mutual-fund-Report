@@ -1,7 +1,7 @@
 import io
 import pandas as pd
 from openpyxl import load_workbook
-from src.mf_report.extract import normalize_company, validate_holdings
+from src.mf_report.extract import normalize_company, validate_holdings, audit_scheme_headings
 from src.mf_report.workbook import build_workbook, validate_workbook, SHEETS
 
 def test_company_normalization(): assert normalize_company("Example Industries Ltd.")=="example"
@@ -41,3 +41,37 @@ def test_validation_still_flags_duplicate_issuer_within_same_snapshot():
     ])
     _checked, issues = validate_holdings(d)
     assert issues.issue.str.contains("Duplicate normalized issuer").any()
+
+
+
+def test_scheme_heading_audit_accepts_single_scheme_with_amc_masthead():
+    found, others = audit_scheme_headings(
+        [
+            "HDFC Mutual Fund\nHDFC Large Cap Fund\nPORTFOLIO\nICICI Bank Ltd. 10.05",
+            "HDFC Mutual Fund\n...Contd on next page\nHDFC Bank Ltd. 6.88",
+        ],
+        "HDFC Large Cap Fund",
+    )
+    assert found is True
+    assert others == []
+
+
+def test_scheme_heading_audit_flags_other_scheme_section():
+    found, others = audit_scheme_headings(
+        [
+            "HDFC Mutual Fund\nHDFC Large Cap Fund\nPORTFOLIO",
+            "HDFC Mutual Fund\nHDFC Mid Cap Fund\nPORTFOLIO",
+        ],
+        "HDFC Large Cap Fund",
+    )
+    assert found is True
+    assert "hdfc mid cap fund" in others
+
+
+def test_scheme_heading_audit_does_not_accept_unrelated_scheme():
+    found, others = audit_scheme_headings(
+        ["HDFC Mutual Fund\nHDFC Small Cap Fund\nPORTFOLIO"],
+        "HDFC Large Cap Fund",
+    )
+    assert found is False
+    assert "hdfc small cap fund" in others
