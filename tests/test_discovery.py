@@ -190,3 +190,59 @@ def test_period_evidence_handles_numeric_competing_months():
     assert _context_has_competing_period(
         "Available reports: 09-2026 and 08-2026", "September", 2026
     ) is True
+
+
+
+def test_generic_pdf_requires_confirmed_month_and_year_controls():
+    class FakeLocator:
+        def evaluate_all(self, _script):
+            return [
+                {
+                    "href": "https://cdn.example.org/factsheet.pdf",
+                    "label": "Download PDF",
+                    "context": "Download latest",
+                },
+                {
+                    "href": "https://cdn.example.org/August-2026.pdf",
+                    "label": "Download PDF",
+                    "context": "August 2026 factsheet",
+                },
+            ]
+
+    class FakePage:
+        def locator(self, _selector):
+            return FakeLocator()
+
+    unconfirmed = _dom_selected_period_pdfs(FakePage(), "September", 2026)
+    assert unconfirmed == []
+
+    confirmed = _dom_selected_period_pdfs(
+        FakePage(), "September", 2026, selector_confirmed=True
+    )
+    assert [row["url"] for row in confirmed] == [
+        "https://cdn.example.org/factsheet.pdf"
+    ]
+    assert confirmed[0]["period_keyword_match"] is True
+    assert confirmed[0]["period_evidence"] == (
+        "Month/year controls confirmed in the same AMC page/frame"
+    )
+
+
+def test_confirmed_controls_do_not_admit_mixed_month_context():
+    class FakeLocator:
+        def evaluate_all(self, _script):
+            return [
+                {
+                    "href": "https://cdn.example.org/factsheet.pdf",
+                    "label": "Download PDF",
+                    "context": "Monthly PDFs: September 2026, August 2026",
+                }
+            ]
+
+    class FakePage:
+        def locator(self, _selector):
+            return FakeLocator()
+
+    assert _dom_selected_period_pdfs(
+        FakePage(), "September", 2026, selector_confirmed=True
+    ) == []
