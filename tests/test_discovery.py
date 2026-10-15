@@ -246,3 +246,24 @@ def test_confirmed_controls_do_not_admit_mixed_month_context():
     assert _dom_selected_period_pdfs(
         FakePage(), "September", 2026, selector_confirmed=True
     ) == []
+
+
+
+def test_period_matching_accepts_two_digit_year_labels():
+    assert _period_matches("HDFC Large Cap Fund_September 26.pdf", "September", 2026)
+    assert _period_matches("factsheet_09-26.pdf", "September", 2026)
+    assert _period_matches("Sep'26 Factsheet.pdf", "September", 2026)
+    assert not _period_matches("August 26 factsheet.pdf", "September", 2026)
+
+
+def test_competing_period_detection_accepts_two_digit_year_labels():
+    assert _context_has_competing_period(
+        "Monthly factsheets: September 26 and August 26",
+        "September",
+        2026,
+    )
+    assert _context_has_competing_period(
+        "Available reports: 09-26 and 08-26",
+        "September",
+        2026,
+    )
