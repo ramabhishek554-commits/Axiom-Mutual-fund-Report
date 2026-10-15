@@ -41,59 +41,76 @@ URL_RE = re.compile(r"^(?:https?://|/)", re.I)
 
 
 def _period_matches(text: str, month: str, year: int) -> bool:
-    """Require both selected month and year, accepting common numeric date formats."""
+    """Require both the requested month and year, including common two-digit year labels."""
     value = str(text or "").lower()
     month_name = str(month).strip().lower()
     aliases = MONTHS.get(month_name, (month_name[:3], ""))
     month_pattern = r"(?:%s)" % "|".join(re.escape(x) for x in (month_name, *aliases) if x)
-    year_text = str(int(year))
-    if re.search(rf"\b{month_pattern}\b", value) and re.search(rf"\b{re.escape(year_text)}\b", value):
+    year_number = int(year)
+    year_text = str(year_number)
+    short_year = f"{year_number % 100:02d}"
+
+    # Named month with a full year, e.g. "September 2026" or "Sep-2026".
+    if re.search(
+        rf"(?<![a-z]){month_pattern}[\\s._/'-]*{re.escape(year_text)}(?!\\d)", value
+    ):
         return True
+    # AMCs often label monthly files with a two-digit year: "September 26" or "Sep'26".
+    if re.search(
+        rf"(?<![a-z])(?:{re.escape(month_name)}|{re.escape(aliases[0])})"
+        rf"[\\s._/'-]*(?<!\\d){re.escape(short_year)}(?!\\d)",
+        value,
+    ):
+        return True
+
     month_num = aliases[1]
     if month_num:
         patterns = (
-            rf"(?<!\d)0?{month_num}[-_/. ]{year_text}(?!\d)",
-            rf"(?<!\d){year_text}[-_/. ]0?{month_num}(?!\d)",
-            rf"(?<!\d){int(month_num)}[-_/. ]{year_text}(?!\d)",
-            rf"(?<!\d){year_text}[-_/. ]{int(month_num)}(?!\d)",
+            rf"(?<!\\d)0?{month_num}[-_/. ]{year_text}(?!\\d)",
+            rf"(?<!\\d){year_text}[-_/. ]0?{month_num}(?!\\d)",
+            rf"(?<!\\d){int(month_num)}[-_/. ]{year_text}(?!\\d)",
+            rf"(?<!\\d){year_text}[-_/. ]{int(month_num)}(?!\\d)",
+            rf"(?<!\\d)0?{month_num}[-_/. ]{short_year}(?!\\d)",
         )
-        return any(re.search(p, value) for p in patterns)
+        return any(re.search(pattern, value) for pattern in patterns)
     return False
-
 
 def _context_has_competing_period(text: str, month: str, year: int) -> bool:
     """Flag nearby text that mentions a different month/year as well as the target."""
     value = str(text or "").lower()
     target_month = month.strip().lower()
     target_year = int(year)
+    target_number = int(MONTHS.get(target_month, ("", "0"))[1])
 
-    # Month-name references such as "August 2026" or "Sep-2025".
+    # Month-name references such as "August 2026", "Sep-2025", or "Aug'26".
     for month_name, (short_name, _number) in MONTHS.items():
         pattern = re.compile(
             rf"(?<![a-z])(?:{re.escape(month_name)}|{re.escape(short_name)})"
-            rf"[\s._/-]+(20\d{{2}})(?!\d)",
+            rf"[\\s._/'-]*(20\\d{{2}}|\\d{{2}})(?!\\d)",
             re.I,
         )
         for match in pattern.finditer(value):
             matched_year = int(match.group(1))
+            if matched_year < 100:
+                matched_year += 2000
             if month_name != target_month or matched_year != target_year:
                 return True
 
-    # Numeric month/year forms such as 08-2026 or 2026/08.
+    # Numeric month/year formats such as 08-2026, 2026/08, or 08-26.
     numeric = re.compile(
-        r"(?<!\d)(0?[1-9]|1[0-2])[-_/. ](20\d{2})(?!\d)"
-        r"|(?<!\d)(20\d{2})[-_/. ](0?[1-9]|1[0-2])(?!\d)"
+        r"(?<!\\d)(0?[1-9]|1[0-2])[-_/. ](20\\d{2}|\\d{2})(?!\\d)"
+        r"|(?<!\\d)(20\\d{2})[-_/. ](0?[1-9]|1[0-2])(?!\\d)"
     )
-    target_number = int(MONTHS.get(target_month, ("", "0"))[1])
     for match in numeric.finditer(value):
         if match.group(1) is not None:
             matched_month, matched_year = int(match.group(1)), int(match.group(2))
         else:
             matched_year, matched_month = int(match.group(3)), int(match.group(4))
+        if matched_year < 100:
+            matched_year += 2000
         if matched_month != target_number or matched_year != target_year:
             return True
     return False
-
 
 def _period_evidence(
     url: str, label: str, context: str, month: str, year: int
