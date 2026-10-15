@@ -433,7 +433,11 @@ def _scan_page_and_frames(page, month: str, year: int) -> list[dict]:
             if selected_period:
                 frame.wait_for_timeout(250)
                 found.extend(_dom_candidates(frame, month, year))
-                found.extend(_dom_selected_period_pdfs(frame, month, year))
+                found.extend(
+                    _dom_selected_period_pdfs(
+                        frame, month, year, selector_confirmed=True
+                    )
+                )
         except Exception:
             LOG.debug("Could not inspect period selectors in frame", exc_info=True)
     return _deduplicate(found)
@@ -509,8 +513,10 @@ def _select_period_if_available(page, month: str, year: int) -> bool:
     return month_selected and year_selected
 
 
-def _dom_selected_period_pdfs(page, month: str, year: int) -> list[dict]:
-    """Collect visible PDF downloads after the requested month and year were selected."""
+def _dom_selected_period_pdfs(
+    page, month: str, year: int, selector_confirmed: bool = False
+) -> list[dict]:
+    """Collect visible PDFs, requiring date evidence or confirmed period selectors in this page/frame."""
     try:
         links = page.locator("a[href]").evaluate_all(
             """anchors => anchors.filter(a => a.getClientRects().length > 0)
@@ -535,13 +541,31 @@ def _dom_selected_period_pdfs(page, month: str, year: int) -> list[dict]:
         if not is_pdf:
             continue
 
-        # Do not assume a PDF belongs to the selected period merely because a
-        # selector was touched. The actual URL, label, or nearby card text must
-        # contain the requested month and year; otherwise this link is omitted.
-        period_match, _evidence = _period_evidence(url, label, context, month, year)
-        if not period_match:
+        period_match, evidence = _period_evidence(url, label, context, month, year)
+        if period_match:
+            found.append(_record(url, label, month, year, context, "javascript_dom_selected_period"))
             continue
-        found.append(_record(url, label, month, year, context, "javascript_dom_selected_period"))
+
+        # Some AMC archive pages return a generic filename, e.g. "factsheet.pdf",
+        # after both month and year controls have been explicitly selected in this
+        # same page/frame. Treat that controlled view as evidence only if URL, label,
+        # and nearby context do not mention a different period or a mixed month list.
+        if not selector_confirmed:
+            continue
+        if _context_has_competing_period(f"{url} {label} {context}", month, year):
+            continue
+
+        record = _record(
+            url,
+            label,
+            month,
+            year,
+            f"{context} | AMC month/year controls explicitly set to {month} {year}",
+            "javascript_dom_confirmed_period_controls",
+        )
+        record["period_keyword_match"] = True
+        record["period_evidence"] = "Month/year controls confirmed in the same AMC page/frame"
+        found.append(record)
     return _deduplicate(found)
 
 def _dom_candidates(page, month: str, year: int) -> list[dict]:
