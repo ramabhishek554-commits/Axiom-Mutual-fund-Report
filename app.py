@@ -29,8 +29,8 @@ discover, upload, analyze, guide = st.tabs(
 with discover:
     st.subheader("Discover official factsheet links")
     st.write(
-        "Searches links visible in the official AMFI factsheet page. Some AMC selectors may be rendered "
-        "dynamically, so a zero-result search does not mean that no factsheets exist."
+        "Checks static AMFI links first, then uses a headless Chromium browser to inspect JavaScript-rendered "
+        "AMC cards for links explicitly associated with the selected month and year. Coverage is not guaranteed."
     )
     today = date.today()
     col1, col2 = st.columns(2)
@@ -49,7 +49,7 @@ with discover:
         st.session_state["discovery_period"] = f"{month} {int(year)}"
         st.session_state["discovery_error"] = None
         try:
-            with st.spinner(f"Checking AMFI's public page for {month} {int(year)}…"):
+            with st.spinner(f"Checking AMFI's page and opening AMC cards for {month} {int(year)}…"):
                 st.session_state["candidate_links"] = discover_factsheet_links(month, int(year))
         except Exception as exc:
             st.session_state["discovery_error"] = f"{type(exc).__name__}: {exc}"
@@ -63,7 +63,11 @@ with discover:
             st.markdown(f"[Open the official AMFI factsheet page]({AMFI_FACTSHEET_URL})")
             st.info("You can continue by downloading a factsheet from the official AMC site and uploading the PDF in the next tab.")
         elif links:
-            st.success(f"Search completed for {period}: {len(links)} candidate link(s) found. Verify every link and portfolio date.")
+            pdf_count = sum(bool(x.get("is_direct_pdf")) for x in links)
+            st.success(
+                f"Search completed for {period}: {len(links)} candidate link(s), including {pdf_count} PDF candidate(s). "
+                "Verify each official source and portfolio valuation date before analysis."
+            )
             st.dataframe(pd.DataFrame(links), use_container_width=True, hide_index=True)
             direct = {f"{x['label']} — {x['url']}": x for x in links if x["is_direct_pdf"]}
             if direct:
@@ -77,14 +81,15 @@ with discover:
                 st.info("Candidates were found, but none is a direct PDF. Open the AMC link and select the requested month's factsheet there.")
         else:
             st.warning(
-                f"The search completed for {period}, but the page parser found no matching downloadable links. "
-                "This is a limitation of the current static-HTML discovery, not proof that factsheets are unavailable."
+                f"The search completed for {period}, but neither the static parser nor the browser-assisted scan found "
+                "a PDF link that could be tied confidently to the selected month. AMFI's interface may have changed, "
+                "or the AMC factsheet may not be posted yet. This does not prove that factsheets are unavailable."
             )
             st.markdown(f"[Open the official AMFI factsheet page]({AMFI_FACTSHEET_URL})")
             st.markdown(
-                "On AMFI, open the relevant AMC's factsheet/download option, choose the requested month, and "
-                "download the PDF. Then use **Upload / review holdings** to process it. No holdings have been "
-                "invented or loaded automatically."
+                "Open the relevant AMC card on AMFI, choose the requested month if it is offered, and download the PDF. "
+                "Then use **Upload / review holdings** to process it. No holdings are fabricated. If the browser fallback "
+                "cannot launch, install Chromium with the command documented in README.md and restart Streamlit."
             )
 
 with upload:
