@@ -467,18 +467,23 @@ def _dom_selected_period_pdfs(page, month: str, year: int) -> list[dict]:
         return []
 
     found = []
-    selected_context = f"AMFI/AMC interface selectors explicitly set to {month} {year}"
     for item in links:
         url = _is_https_url(item.get("href", ""))
         if not url:
             continue
         label = item.get("label", "")
+        context = item.get("context", "")
         parsed = urlparse(url)
-        if not (parsed.path.lower().endswith(".pdf") or "pdf" in label.lower() or "pdf" in url.lower()):
+        is_pdf = parsed.path.lower().endswith(".pdf") or "pdf" in label.lower() or "pdf" in url.lower()
+        if not is_pdf:
             continue
-        record = _record(url, label, month, year, selected_context, "javascript_dom_selected_period")
-        record["period_keyword_match"] = True
-        found.append(record)
+
+        # Do not assume a PDF belongs to the selected period merely because a
+        # selector was touched. The actual URL, label, or nearby card text must
+        # contain the requested month and year; otherwise this link is omitted.
+        if not _period_matches(f"{url} {label} {context}", month, year):
+            continue
+        found.append(_record(url, label, month, year, context, "javascript_dom_selected_period"))
     return _deduplicate(found)
 
 def _dom_candidates(page, month: str, year: int) -> list[dict]:
@@ -546,6 +551,15 @@ def _deduplicate(records: list[dict]) -> list[dict]:
     return list(merged.values())
 
 
+
+def _confirmed_period_pdfs(records: list[dict]) -> list[dict]:
+    """Only retain PDF candidates with explicit evidence for the selected month and year."""
+    return [
+        item for item in _deduplicate(records)
+        if item.get("is_direct_pdf") and item.get("period_keyword_match")
+    ]
+
+
 def discover_factsheet_links(month: str, year: int, session: requests.Session | None = None) -> list[dict]:
     """Discover selected-month factsheet links from the official AMFI factsheet page.
 
@@ -563,8 +577,9 @@ def discover_factsheet_links(month: str, year: int, session: requests.Session | 
         )
         response.raise_for_status()
         found = _static_candidates(response.text, month, int(year))
-        if found:
-            return found
+        confirmed_pdfs = _confirmed_period_pdfs(found)
+        if confirmed_pdfs:
+            return confirmed_pdfs
     except Exception as exc:
         if session is not None:
             raise
@@ -574,7 +589,7 @@ def discover_factsheet_links(month: str, year: int, session: requests.Session | 
     if session is not None:
         return []
     dynamic, inspected = _playwright_candidates(month, int(year))
-    found = _deduplicate(dynamic)
+    found = _confirmed_period_pdfs(dynamic)
     if not found:
         if static_error is not None:
             LOG.warning("The AMFI browser fallback found no matching links after static fetch error: %s", static_error)
