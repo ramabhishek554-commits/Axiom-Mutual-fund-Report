@@ -214,9 +214,14 @@ def _playwright_candidates(month: str, year: int) -> tuple[list[dict], int]:
                 try:
                     page.get_by_text(name, exact=True).first.click(timeout=1600)
                     page.wait_for_timeout(180)
-                    _select_period_if_available(page, month, year)
-                    page.wait_for_timeout(120)
+                    selected_period = _select_period_if_available(page, month, year)
+                    page.wait_for_timeout(250)
                     found.extend(_dom_candidates(page, month, year))
+                    # Some AMCs use generic PDF filenames after month/year is selected.
+                    # Accept visible PDF links without date text only when both period
+                    # controls were explicitly matched and selected.
+                    if selected_period:
+                        found.extend(_dom_selected_period_pdfs(page, month, year))
                     cards_inspected += 1
                 except Exception:
                     LOG.debug("Could not interact with AMFI card %r", name, exc_info=True)
@@ -244,32 +249,104 @@ def _playwright_candidates(month: str, year: int) -> tuple[list[dict], int]:
     return _deduplicate(found), cards_inspected
 
 
-def _select_period_if_available(page, month: str, year: int) -> None:
-    """Select standard HTML month/year controls if an AMC card exposes them."""
+def _select_period_if_available(page, month: str, year: int) -> bool:
+    """Select native month/year controls and confirm both requested values were found."""
     selects = page.locator("select")
     try:
         count = min(selects.count(), 12)
     except Exception:
-        return
+        return False
+
     month_aliases = {month.lower(), month[:3].lower()}
+    month_selected = False
+    year_selected = False
+    year_text = str(int(year))
+
     for idx in range(count):
         select = selects.nth(idx)
         try:
             options = select.locator("option").evaluate_all(
                 "(items) => items.map(o => ({text:(o.textContent||'').trim(), value:o.value}))"
             )
-            target = next(
-                (o for o in options if o["text"].lower() in month_aliases or o["text"].lower().startswith(month.lower())),
-                None,
-            )
-            if not target:
-                target = next((o for o in options if o["text"].strip() == str(year)), None)
-            if target and target["value"]:
-                select.select_option(value=target["value"], timeout=900)
-                page.wait_for_timeout(100)
+            target = None
+            target_has_month = False
+            target_has_year = False
+
+            for option in options:
+                label = str(option.get("text", "")).strip()
+                value = str(option.get("value", "")).strip()
+                normalized = label.lower()
+                combined = f"{label} {value}".lower()
+                starts_month = any(
+                    normalized == alias
+                    or normalized.startswith(alias + " ")
+                    or normalized.startswith(alias + "-")
+                    or normalized.startswith(alias + "/")
+                    for alias in month_aliases if alias
+                )
+                numeric_month = MONTHS[month.lower()][1]
+                numeric_match = bool(
+                    re.search(rf"(?<!\d)0?{numeric_month}[-_/. ]{year_text}(?!\d)", combined)
+                    or re.search(rf"(?<!\d){year_text}[-_/. ]0?{numeric_month}(?!\d)", combined)
+                )
+                if starts_month or numeric_match:
+                    target = option
+                    target_has_month = True
+                    target_has_year = year_text in combined or numeric_match
+                    break
+
+            if target is None:
+                target = next(
+                    (
+                        option for option in options
+                        if str(option.get("text", "")).strip() == year_text
+                        or str(option.get("value", "")).strip() == year_text
+                    ),
+                    None,
+                )
+                if target:
+                    target_has_year = True
+
+            if target and target.get("value") is not None:
+                select.select_option(value=str(target["value"]), timeout=900)
+                if target_has_month:
+                    month_selected = True
+                if target_has_year:
+                    year_selected = True
         except Exception:
             continue
 
+    return month_selected and year_selected
+
+
+def _dom_selected_period_pdfs(page, month: str, year: int) -> list[dict]:
+    """Collect visible PDF downloads after the requested month and year were selected."""
+    try:
+        links = page.locator("a[href]").evaluate_all(
+            """anchors => anchors.filter(a => a.getClientRects().length > 0)
+              .map(a => ({
+                href: a.href,
+                label: [a.innerText || '', a.getAttribute('aria-label') || '', a.title || ''].join(' ').trim(),
+                context: ((a.parentElement && a.parentElement.innerText) || '').replace(/\\s+/g, ' ').trim().slice(0, 500)
+              }))"""
+        )
+    except Exception:
+        return []
+
+    found = []
+    selected_context = f"AMFI/AMC interface selectors explicitly set to {month} {year}"
+    for item in links:
+        url = _is_https_url(item.get("href", ""))
+        if not url:
+            continue
+        label = item.get("label", "")
+        parsed = urlparse(url)
+        if not (parsed.path.lower().endswith(".pdf") or "pdf" in label.lower() or "pdf" in url.lower()):
+            continue
+        record = _record(url, label, month, year, selected_context, "javascript_dom_selected_period")
+        record["period_keyword_match"] = True
+        found.append(record)
+    return _deduplicate(found)
 
 def _dom_candidates(page, month: str, year: int) -> list[dict]:
     try:
