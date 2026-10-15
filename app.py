@@ -202,7 +202,10 @@ with discover:
 
 with upload:
     st.subheader("Upload factsheet and extract candidate holdings")
-    st.caption("Extraction is heuristic. All extracted rows require manual verification against the source PDF.")
+    st.caption(
+        "Extraction is heuristic. Upload a scheme-specific PDF. To prevent mislabelling, extraction stops if the chosen scheme "
+        "cannot be found in page headings or the PDF appears to contain headings for multiple schemes. Review every extracted row."
+    )
     pdf = st.file_uploader("Official AMC factsheet PDF", type=["pdf"], key="pdf")
     with st.form("pdf_metadata"):
         scheme = st.text_input("Exact scheme name")
@@ -226,6 +229,8 @@ with upload:
                     [st.session_state.get("holdings", pd.DataFrame()), extracted], ignore_index=True
                 )
                 st.success(f"Added {len(extracted)} candidate rows; review before analysis.")
+            except ValueError as exc:
+                st.error(f"Extraction stopped to protect scheme data integrity: {exc}")
             except Exception as exc:
                 st.error(f"Extraction failed: {type(exc).__name__}: {exc}")
     st.divider()
