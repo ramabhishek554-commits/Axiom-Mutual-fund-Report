@@ -7,6 +7,7 @@ import streamlit as st
 from src.mf_report.analytics import CATEGORIES, concentration_analysis, overlap_matrix, sector_exposure
 from src.mf_report.config import AMFI_FACTSHEET_URL, ensure_directories
 from src.mf_report.discovery import discover_factsheet_links, download_pdf
+from src.mf_report.batch_download import download_candidates_zip
 from src.mf_report.extract import extract_pdf_tables, validate_holdings
 from src.mf_report.workbook import build_workbook, validate_workbook
 
@@ -46,6 +47,15 @@ with discover:
     if st.button("Search AMFI page", type="primary"):
         # Clear old results first; always provide visible feedback even for an empty result.
         st.session_state["candidate_links"] = []
+        for key in (
+            "batch_zip_bytes",
+            "batch_zip_filename",
+            "batch_zip_period",
+            "batch_zip_included",
+            "batch_zip_errors",
+            "batch_zip_selection_signature",
+        ):
+            st.session_state.pop(key, None)
         st.session_state["discovery_attempted"] = True
         st.session_state["discovery_period"] = f"{month} {int(year)}"
         st.session_state["discovery_error"] = None
@@ -98,6 +108,73 @@ with discover:
                         st.json(download_pdf(direct[choice]["url"]))
                     except Exception as exc:
                         st.error(f"Download failed: {type(exc).__name__}: {exc}")
+
+                st.divider()
+                st.markdown("**Download multiple matched factsheets**")
+                st.caption(
+                    "Choose one or more of the month-qualified PDF candidates. Keep all selected to create one ZIP "
+                    "containing the matched PDFs, source URLs, SHA-256 checksums and any download errors."
+                )
+                batch_selection = st.multiselect(
+                    "PDFs to include in ZIP",
+                    options=list(direct),
+                    default=list(direct),
+                    key=f"batch_pdf_selection_{period.replace(' ', '_')}",
+                )
+                if st.button(
+                    "Download selected PDFs as ZIP",
+                    type="primary",
+                    disabled=not batch_selection,
+                ):
+                    try:
+                        with st.spinner(
+                            f"Downloading {len(batch_selection)} PDF candidate(s), checking each file, and preparing the ZIP…"
+                        ):
+                            zip_bytes, included, batch_errors = download_candidates_zip(
+                                [direct[item] for item in batch_selection],
+                                month,
+                                int(year),
+                            )
+                        st.session_state["batch_zip_bytes"] = zip_bytes if included else None
+                        st.session_state["batch_zip_filename"] = (
+                            f"amfi_factsheets_{month.lower()}_{int(year)}.zip"
+                        )
+                        st.session_state["batch_zip_period"] = period
+                        st.session_state["batch_zip_included"] = included
+                        st.session_state["batch_zip_errors"] = batch_errors
+                        st.session_state["batch_zip_selection_signature"] = tuple(batch_selection)
+                    except Exception as exc:
+                        st.error(f"Batch download failed: {type(exc).__name__}: {exc}")
+
+                batch_zip_matches_view = (
+                    st.session_state.get("batch_zip_bytes")
+                    and st.session_state.get("batch_zip_period") == period
+                    and st.session_state.get("batch_zip_selection_signature") == tuple(batch_selection)
+                )
+                if batch_zip_matches_view:
+                    st.success(
+                        f"ZIP prepared with {len(st.session_state['batch_zip_included'])} PDF(s) "
+                        f"for {period}."
+                    )
+                    st.download_button(
+                        "Save matched factsheets ZIP",
+                        data=st.session_state["batch_zip_bytes"],
+                        file_name=st.session_state["batch_zip_filename"],
+                        mime="application/zip",
+                        type="primary",
+                        key=f"save_batch_zip_{month}_{int(year)}",
+                    )
+                if (
+                    st.session_state.get("batch_zip_period") == period
+                    and st.session_state.get("batch_zip_selection_signature") == tuple(batch_selection)
+                    and st.session_state.get("batch_zip_errors")
+                ):
+                    st.warning(
+                        "Some PDFs were skipped or failed. Open download_manifest.json in the ZIP to see details, "
+                        "or review the messages below."
+                    )
+                    for batch_error in st.session_state["batch_zip_errors"]:
+                        st.caption(batch_error)
             else:
                 st.info("Candidates were found, but none is a direct PDF. Open the AMC link and select the requested month's factsheet there.")
         else:
