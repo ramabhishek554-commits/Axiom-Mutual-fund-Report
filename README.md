@@ -9,6 +9,7 @@ A Python/Streamlit research tool for reviewing Indian mutual-fund portfolios acr
 - Static AMFI link parsing, followed by Playwright/Chromium interaction with JavaScript-rendered AMC cards when the static page contains no month-qualified PDF links.
 - Strict month/year-qualified PDF filtering: explicit URL/label dates are preferred; nearby context must identify one unambiguous period. Generic filenames are accepted only after the AMC page/frame's month and year selectors are both confirmed, with no conflicting period evidence.
 - PDF/CSV upload, reviewable holdings extraction, portfolio overlap, sector and concentration analysis.
+- Select multiple month-qualified AMC PDFs and download them as a ZIP with source URLs, SHA-256 checksums, timestamps and a manifest; the combined PDF payload is capped at 100 MiB.
 - Downloadable Excel workbook with the 11 requested sheets, plus automated tests and CI.
 
 ## Quick start (Python 3.10+)
@@ -36,7 +37,7 @@ streamlit run app.py
 ## Workflow
 
 1. Open **Discover factsheets** and search the target month/year at the official [AMFI factsheet page](https://www.amfiindia.com/online-center/download-factsheets).
-2. Follow the official AMC link. Only PDF candidates with clear month/year evidence are displayed. If a page container lists several months and the PDF URL/label is generic, that candidate is intentionally omitted to avoid showing the wrong period. This conservative filter can miss valid PDFs; verify the PDF cover and portfolio valuation date before using it.
+2. Review the candidate list and its period-evidence column. Select individual PDFs or keep all desired matches selected in the batch-download picker, then use **Download selected PDFs as ZIP**. The ZIP includes a manifest with source URLs and SHA-256 checksums. The conservative period filter may omit valid PDFs when the requested month cannot be established confidently; verify the PDF cover and portfolio valuation date before using it.
 3. Upload a factsheet PDF. Enter the exact scheme name, verify the Large/Mid/Small Cap classification using the official disclosure, and record the portfolio valuation date printed in the document. Publication date and portfolio valuation date are distinct.
 4. Review and edit every extracted row. The PDF parser is heuristic; it does not reliably interpret every multi-column, debt, derivative or scanned layout. Scanned PDFs may need external OCR followed by manual CSV cleanup.
 5. Alternatively upload a cleaned CSV with required columns `scheme, category, company, weight_pct`. Recommended extra columns: `sector, instrument_type, valuation_date, source_url, source_pdf, page, validation_status`. Use percentage units: 12.5 means 12.5%. Mark an issuer `Equity` in `instrument_type` only after checking the source.
