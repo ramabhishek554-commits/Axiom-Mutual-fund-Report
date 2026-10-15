@@ -4,6 +4,13 @@ A Python/Streamlit research tool for reviewing Indian mutual-fund portfolios acr
 
 > **Data integrity first:** no fund holdings are fabricated. Extracted PDF rows are heuristic and require manual review. Verify the exact scheme, category, source and portfolio valuation date from the official AMC/AMFI document. This is not investment advice or a return prediction.
 
+## Features
+
+- Static AMFI link parsing, followed by Playwright/Chromium interaction with JavaScript-rendered AMC cards when the static page contains no month-qualified PDF links.
+- Month/year-qualified link matching; the app must not present an unrelated month as the selected factsheet.
+- PDF/CSV upload, reviewable holdings extraction, portfolio overlap, sector and concentration analysis.
+- Downloadable Excel workbook with the 11 requested sheets, plus automated tests and CI.
+
 ## Quick start (Python 3.10+)
 
 Windows PowerShell:
@@ -72,7 +79,7 @@ The app creates `data/raw_factsheets`, `data/processed`, `data/reference`, `repo
 
 ## Limitations
 
-- Factsheet discovery checks links visible on the AMFI page and cannot guarantee complete coverage.
+- Factsheet discovery checks static links, then uses Playwright/Chromium to inspect AMFI's JavaScript-rendered AMC cards. It still cannot guarantee complete coverage if the site's interaction or API changes. After installing requirements, run `python -m playwright install chromium` once in the active virtual environment.
 - PDF table extraction is best-effort and every row requires review.
 - OCR is not bundled.
 - Category verification and sector mapping are user/source-driven, not inferred from scheme names.
