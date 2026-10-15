@@ -19,3 +19,25 @@ def test_excel_has_eleven_sheets_and_reopens():
     assert wb.sheetnames==SHEETS
     assert wb["Executive Summary"]["B2"].value==100000
     wb.close()
+
+
+
+def test_validation_checks_totals_and_duplicates_per_valuation_date():
+    d = pd.DataFrame([
+        {"scheme":"A","category":"Large Cap","company":"Issuer X Ltd","weight_pct":60,"valuation_date":"2026-08-31"},
+        {"scheme":"A","category":"Large Cap","company":"Issuer Y Ltd","weight_pct":40,"valuation_date":"2026-08-31"},
+        {"scheme":"A","category":"Large Cap","company":"Issuer X Ltd","weight_pct":55,"valuation_date":"2026-09-30"},
+        {"scheme":"A","category":"Large Cap","company":"Issuer Y Ltd","weight_pct":45,"valuation_date":"2026-09-30"},
+    ])
+    checked, issues = validate_holdings(d)
+    assert len(checked) == 4
+    assert issues.empty
+
+
+def test_validation_still_flags_duplicate_issuer_within_same_snapshot():
+    d = pd.DataFrame([
+        {"scheme":"A","category":"Large Cap","company":"Issuer X Ltd","weight_pct":40,"valuation_date":"2026-08-31"},
+        {"scheme":"A","category":"Large Cap","company":"Issuer X","weight_pct":30,"valuation_date":"2026-08-31"},
+    ])
+    _checked, issues = validate_holdings(d)
+    assert issues.issue.str.contains("Duplicate normalized issuer").any()
