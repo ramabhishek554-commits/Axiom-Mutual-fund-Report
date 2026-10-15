@@ -30,7 +30,8 @@ with discover:
     st.subheader("Discover official factsheet links")
     st.write(
         "Checks static AMFI links first, then uses a headless Chromium browser to inspect JavaScript-rendered "
-        "AMC cards for links explicitly associated with the selected month and year. Coverage is not guaranteed."
+        "AMC cards for PDFs explicitly associated with the selected month and year. Results without clear date evidence are omitted, " 
+        "so some valid AMC PDFs may be missed rather than showing a potentially wrong month. Coverage is not guaranteed."
     )
     today = date.today()
     col1, col2 = st.columns(2)
@@ -65,13 +66,13 @@ with discover:
         elif links:
             pdf_count = sum(bool(x.get("is_direct_pdf")) for x in links)
             st.success(
-                f"Search completed for {period}: {len(links)} candidate link(s), including {pdf_count} PDF candidate(s). "
-                "Verify each official source and portfolio valuation date before analysis."
+                f"Search completed for {period}: {len(links)} PDF candidate(s) with matching month/year evidence."
             )
             st.info(
-                "**Fund house hint** is inferred from the URL or nearby page text, not independently verified. "
-                "Before downloading, open the candidate and confirm the AMC name, exact scheme, factsheet month, "
-                "and portfolio valuation date inside the PDF. If the hint says Unknown, do not guess."
+                "Only PDF candidates whose URL, label, or nearby page text explicitly matches the selected month and year are shown. "
+                "A PDF without clear month/year evidence is omitted even if it appears after a selector change. "
+                "**Fund house hints are unverified**: open each PDF and confirm the AMC, scheme, factsheet month, "
+                "and portfolio valuation date before analysis."
             )
             st.dataframe(
                 pd.DataFrame(links),
