@@ -52,10 +52,10 @@ def _period_matches(text: str, month: str, year: int) -> bool:
     month_num = aliases[1]
     if month_num:
         patterns = (
-            rf"\b{month_num}[-_/. ]{year_text}\b",
-            rf"\b{year_text}[-_/. ]{month_num}\b",
-            rf"\b{int(month_num)}[-_/. ]{year_text}\b",
-            rf"\b{year_text}[-_/. ]{int(month_num)}\b",
+            rf"(?<!\d)0?{month_num}[-_/. ]{year_text}(?!\d)",
+            rf"(?<!\d){year_text}[-_/. ]0?{month_num}(?!\d)",
+            rf"(?<!\d){int(month_num)}[-_/. ]{year_text}(?!\d)",
+            rf"(?<!\d){year_text}[-_/. ]{int(month_num)}(?!\d)",
         )
         return any(re.search(p, value) for p in patterns)
     return False
