@@ -68,8 +68,27 @@ with discover:
                 f"Search completed for {period}: {len(links)} candidate link(s), including {pdf_count} PDF candidate(s). "
                 "Verify each official source and portfolio valuation date before analysis."
             )
-            st.dataframe(pd.DataFrame(links), use_container_width=True, hide_index=True)
-            direct = {f"{x['label']} — {x['url']}": x for x in links if x["is_direct_pdf"]}
+            st.info(
+                "**Fund house hint** is inferred from the URL or nearby page text, not independently verified. "
+                "Before downloading, open the candidate and confirm the AMC name, exact scheme, factsheet month, "
+                "and portfolio valuation date inside the PDF. If the hint says Unknown, do not guess."
+            )
+            st.dataframe(
+                pd.DataFrame(links),
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "fund_house_hint": st.column_config.TextColumn("Likely AMC / fund house"),
+                    "fund_house_evidence": st.column_config.TextColumn("Why this was identified"),
+                    "verification_status": st.column_config.TextColumn("Verification status"),
+                    "url": st.column_config.LinkColumn("Open candidate URL"),
+                    "source_context": st.column_config.TextColumn("Page context"),
+                },
+            )
+            direct = {
+                f"{x.get('fund_house_hint', 'Unknown')} | {x['label']} — {x['url']}": x
+                for x in links if x["is_direct_pdf"]
+            }
             if direct:
                 choice = st.selectbox("Direct PDF candidate", list(direct))
                 if st.button("Download selected PDF"):
