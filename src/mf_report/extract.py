@@ -22,9 +22,69 @@ def _number(value):
     except ValueError:
         return None
 
+
+def _fold_scheme_text(value):
+    """Normalize scheme headings without removing meaningful scheme words."""
+    return " ".join(re.sub(r"[^a-z0-9]+", " ", str(value or "").lower()).split())
+
+
+def _looks_like_other_scheme_heading(line):
+    """Conservatively identify likely fund titles near the top of a PDF page."""
+    normalized = _fold_scheme_text(line)
+    words = normalized.split()
+    if len(words) < 3 or len(words) > 14:
+        return False
+    generic_prefixes = (
+        "fund manager", "fund facts", "fund performance", "investment objective",
+        "portfolio of", "portfolio disclosure", "category of scheme", "scheme information",
+        "scheme details", "name of scheme", "mutual fund investments", "riskometer",
+    )
+    if any(normalized.startswith(prefix) for prefix in generic_prefixes):
+        return False
+    # AMC mastheads such as "HDFC Mutual Fund" identify the fund house, not a scheme.
+    if normalized.endswith(" mutual fund") or normalized == "mutual fund":
+        return False
+    return bool(re.search(r"\\b(?:fund|etf|fof)\\b", normalized))
+
+
+def audit_scheme_headings(page_texts, scheme):
+    """Return whether the selected scheme appears in page headings and other scheme-title hints."""
+    selected = _fold_scheme_text(scheme)
+    selected_found = False
+    other_titles = set()
+    for page_text in page_texts:
+        # Scheme titles are normally near the top; do not match a mention deep in a
+        # holdings table or a generic body paragraph as evidence of the page's scheme.
+        top_lines = [line.strip() for line in str(page_text or "").splitlines()[:12] if line.strip()]
+        for line in top_lines:
+            normalized = _fold_scheme_text(line)
+            if selected and selected in normalized:
+                selected_found = True
+                continue
+            if _looks_like_other_scheme_heading(line):
+                other_titles.add(normalized)
+    return selected_found, sorted(other_titles)
+
+
 def extract_pdf_tables(pdf_path, scheme, category, valuation_date="", source_url=""):
     records, path = [], Path(pdf_path)
     with pdfplumber.open(path) as pdf:
+        page_texts = [page.extract_text() or "" for page in pdf.pages]
+        selected_found, other_titles = audit_scheme_headings(page_texts, scheme)
+        if not selected_found:
+            raise ValueError(
+                f'The selected scheme "{scheme}" was not found in the page headings. '
+                "Upload the scheme-specific official factsheet, check the exact scheme name, "
+                "or use OCR and a cleaned CSV if this is a scanned PDF. No holdings were tagged."
+            )
+        if other_titles:
+            examples = ", ".join(other_titles[:4])
+            raise ValueError(
+                "This PDF appears to contain more than one scheme section "
+                f"(other heading(s): {examples}). To prevent mislabelled holdings, upload a "
+                "scheme-specific PDF or split the AMC-wide PDF into one scheme per file first. "
+                "No holdings were tagged."
+            )
         for page_no, page in enumerate(pdf.pages, 1):
             for table_no, table in enumerate(page.extract_tables() or [], 1):
                 for row in table or []:
