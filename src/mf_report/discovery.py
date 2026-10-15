@@ -251,6 +251,52 @@ def _static_candidates(html: str, month: str, year: int) -> list[dict]:
     return _deduplicate(found)
 
 
+def _json_month_year_fields_match(record: dict, month: str, year: int) -> bool:
+    """Match explicit month/year metadata fields on the same JSON object as a URL."""
+    month_keys = {
+        "month", "monthname", "factsheetmonth", "reportmonth",
+        "periodmonth", "publicationmonth", "selectedmonth",
+    }
+    year_keys = {
+        "year", "yearnumber", "factsheetyear", "reportyear",
+        "periodyear", "publicationyear", "selectedyear",
+    }
+    observed_months = []
+    observed_years = []
+    for key, value in record.items():
+        normalized_key = re.sub(r"[^a-z0-9]", "", str(key).lower())
+        if normalized_key in month_keys and value is not None:
+            text = str(value).strip().lower()
+            aliases = MONTHS.get(month.lower(), (month[:3].lower(), ""))
+            month_values = {month.lower(), aliases[0].lower(), aliases[1]}
+            if text.isdigit():
+                try:
+                    observed_months.append(int(text))
+                except ValueError:
+                    pass
+            elif text in month_values:
+                observed_months.append(int(aliases[1]))
+            else:
+                observed_months.append(-1)
+        elif normalized_key in year_keys and value is not None:
+            text = str(value).strip()
+            try:
+                numeric_year = int(float(text))
+                if numeric_year < 100:
+                    numeric_year += 2000
+                observed_years.append(numeric_year)
+            except (TypeError, ValueError, OverflowError):
+                observed_years.append(-1)
+
+    if not observed_months or not observed_years:
+        return False
+    expected_month = int(MONTHS[month.lower()][1])
+    return (
+        all(value == expected_month for value in observed_months)
+        and all(value == int(year) for value in observed_years)
+    )
+
+
 def _payload_candidates(payload, month: str, year: int, source_url: str) -> list[dict]:
     """Find date-qualified PDF links in JSON responses observed during AMFI interaction."""
     found: list[dict] = []
@@ -272,9 +318,15 @@ def _payload_candidates(payload, month: str, year: int, source_url: str) -> list
                     combined = f"{key_label} {context} {url}".lower()
                     has_pdf_signal = parsed.path.lower().endswith(".pdf") or "pdf" in combined
                     has_fact_signal = "factsheet" in combined or "fact sheet" in combined
-                    period_match, _evidence = _period_evidence(url, key_label, context, month, year)
+                    period_match, evidence = _period_evidence(url, key_label, context, month, year)
+                    if not period_match and _json_month_year_fields_match(value, month, year):
+                        period_match = True
+                        evidence = "JSON month/year metadata fields match selected period"
                     if period_match and (has_pdf_signal or has_fact_signal):
-                        found.append(_record(url, key_label or "Factsheet PDF", month, year, context, "amfi_json"))
+                        record = _record(url, key_label or "Factsheet PDF", month, year, context, "amfi_json")
+                        record["period_keyword_match"] = True
+                        record["period_evidence"] = evidence
+                        found.append(record)
                 elif isinstance(item, (dict, list)):
                     walk(item, f"{context} {key}")
         elif isinstance(value, list):
