@@ -61,6 +61,55 @@ def _period_matches(text: str, month: str, year: int) -> bool:
     return False
 
 
+def _context_has_competing_period(text: str, month: str, year: int) -> bool:
+    """Flag nearby text that mentions a different month/year as well as the target."""
+    value = str(text or "").lower()
+    target_month = month.strip().lower()
+    target_year = int(year)
+
+    # Month-name references such as "August 2026" or "Sep-2025".
+    for month_name, (short_name, _number) in MONTHS.items():
+        pattern = re.compile(
+            rf"(?<![a-z])(?:{re.escape(month_name)}|{re.escape(short_name)})"
+            rf"[\\s._/-]+(20\\d{{2}})(?!\\d)",
+            re.I,
+        )
+        for match in pattern.finditer(value):
+            matched_year = int(match.group(1))
+            if month_name != target_month or matched_year != target_year:
+                return True
+
+    # Numeric month/year forms such as 08-2026 or 2026/08.
+    numeric = re.compile(
+        r"(?<!\\d)(0?[1-9]|1[0-2])[-_/. ](20\\d{2})(?!\\d)"
+        r"|(?<!\\d)(20\\d{2})[-_/. ](0?[1-9]|1[0-2])(?!\\d)"
+    )
+    target_number = int(MONTHS.get(target_month, ("", "0"))[1])
+    for match in numeric.finditer(value):
+        if match.group(1) is not None:
+            matched_month, matched_year = int(match.group(1)), int(match.group(2))
+        else:
+            matched_year, matched_month = int(match.group(3)), int(match.group(4))
+        if matched_month != target_number or matched_year != target_year:
+            return True
+    return False
+
+
+def _period_evidence(
+    url: str, label: str, context: str, month: str, year: int
+) -> tuple[bool, str]:
+    """Use explicit URL/label evidence first; use context only when date-unambiguous."""
+    if _period_matches(url, month, year):
+        return True, "URL contains selected month/year"
+    if _period_matches(label, month, year):
+        return True, "Link label contains selected month/year"
+    if _period_matches(context, month, year):
+        if _context_has_competing_period(context, month, year):
+            return False, "Nearby context contains multiple months/years"
+        return True, "Nearby context uniquely identifies selected month/year"
+    return False, "No clear month/year evidence"
+
+
 def _is_https_url(raw_url: str, base_url: str = AMFI_FACTSHEET_URL) -> str | None:
     url = urljoin(base_url, str(raw_url or "").strip())
     parsed = urlparse(url)
@@ -128,14 +177,16 @@ def _record(url: str, label: str, month: str, year: int, context: str, method: s
     parsed = urlparse(url)
     label = " ".join(str(label or "").split()) or Path(parsed.path).name or "Official source link"
     fund_house, fund_house_evidence = _identify_fund_house(url, label, context)
+    period_matches, period_evidence = _period_evidence(url, label, context, month, year)
     return {
         "fund_house_hint": fund_house,
         "fund_house_evidence": fund_house_evidence,
         "label": label[:240],
         "url": url,
         "source_context": " ".join(str(context or "").split())[:500],
-        "is_direct_pdf": parsed.path.lower().endswith(".pdf") or "pdf" in label.lower(),
-        "period_keyword_match": _period_matches(f"{url} {label} {context}", month, year),
+        "period_evidence": period_evidence,
+        "is_direct_pdf": parsed.path.lower().endswith(".pdf") or "pdf" in label.lower() or "pdf" in url.lower(),
+        "period_keyword_match": period_matches,
         "requested_period": f"{month} {year}",
         "discovered_at_utc": datetime.now(timezone.utc).isoformat(),
         "discovery_source": AMFI_FACTSHEET_URL,
@@ -151,7 +202,12 @@ def _nearest_period_context(node, month: str, year: int) -> str:
         if current is None:
             break
         value = " ".join(current.get_text(" ", strip=True).split())
-        if value and len(value) <= 500 and _period_matches(value, month, year):
+        if (
+            value
+            and len(value) <= 500
+            and _period_matches(value, month, year)
+            and not _context_has_competing_period(value, month, year)
+        ):
             return value
         current = current.parent
     return ""
@@ -172,7 +228,7 @@ def _static_candidates(html: str, month: str, year: int) -> list[dict]:
         is_pdf = parsed.path.lower().endswith(".pdf") or "pdf" in label.lower()
         all_text = f"{label} {context} {url}".lower()
         has_factsheet_label = "factsheet" in all_text or "fact sheet" in all_text
-        period_match = _period_matches(f"{url} {label} {context}", month, year)
+        period_match, _evidence = _period_evidence(url, label, context, month, year)
         if period_match and (is_pdf or has_factsheet_label):
             found.append(_record(url, label, month, year, context, "static_html"))
     return _deduplicate(found)
@@ -199,7 +255,8 @@ def _payload_candidates(payload, month: str, year: int, source_url: str) -> list
                     combined = f"{key_label} {context} {url}".lower()
                     has_pdf_signal = parsed.path.lower().endswith(".pdf") or "pdf" in combined
                     has_fact_signal = "factsheet" in combined or "fact sheet" in combined
-                    if _period_matches(f"{context} {url}", month, year) and (has_pdf_signal or has_fact_signal):
+                    period_match, _evidence = _period_evidence(url, key_label, context, month, year)
+                    if period_match and (has_pdf_signal or has_fact_signal):
                         found.append(_record(url, key_label or "Factsheet PDF", month, year, context, "amfi_json"))
                 elif isinstance(item, (dict, list)):
                     walk(item, f"{context} {key}")
@@ -481,7 +538,8 @@ def _dom_selected_period_pdfs(page, month: str, year: int) -> list[dict]:
         # Do not assume a PDF belongs to the selected period merely because a
         # selector was touched. The actual URL, label, or nearby card text must
         # contain the requested month and year; otherwise this link is omitted.
-        if not _period_matches(f"{url} {label} {context}", month, year):
+        period_match, _evidence = _period_evidence(url, label, context, month, year)
+        if not period_match:
             continue
         found.append(_record(url, label, month, year, context, "javascript_dom_selected_period"))
     return _deduplicate(found)
@@ -530,7 +588,8 @@ def _dom_candidates(page, month: str, year: int) -> list[dict]:
         all_text = f"{url} {label} {context}"
         is_pdf = parsed.path.lower().endswith(".pdf") or "pdf" in label.lower()
         has_factsheet_label = "factsheet" in all_text.lower() or "fact sheet" in all_text.lower()
-        if _period_matches(all_text, month, year) and (is_pdf or has_factsheet_label):
+        period_match, _evidence = _period_evidence(url, label, context, month, year)
+        if period_match and (is_pdf or has_factsheet_label):
             found.append(_record(url, label, month, year, context, "javascript_dom"))
     return found
 
