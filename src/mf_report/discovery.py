@@ -69,18 +69,78 @@ def _is_https_url(raw_url: str, base_url: str = AMFI_FACTSHEET_URL) -> str | Non
     return url
 
 
+
+# Fund-house aliases are deliberately used only as hints. Source pages and URLs
+# can be generic or CDN-hosted, so the application must still ask the user to verify.
+_FUND_HOUSE_ALIASES = [
+    ("HDFC Mutual Fund", ("hdfc mutual fund", "hdfc mutual", "hdfcfund", "hdfc")),
+    ("Axis Mutual Fund", ("axis mutual fund", "axis mutual", "axismf", "axismf.com", "axismf.in")),
+    ("ICICI Prudential Mutual Fund", ("icici prudential mutual fund", "icici prudential", "icicipru", "icicipruamc")),
+    ("SBI Mutual Fund", ("sbi mutual fund", "sbi mutual", "sbimf", "sbimf.com")),
+    ("PPFAS Mutual Fund", ("ppfas mutual fund", "parag parikh", "ppfas", "amc.ppfas")),
+    ("Nippon India Mutual Fund", ("nippon india mutual fund", "nippon india", "nipponmf")),
+    ("Kotak Mahindra Mutual Fund", ("kotak mahindra mutual fund", "kotak mutual fund", "kotakmf")),
+    ("Mirae Asset Mutual Fund", ("mirae asset mutual fund", "mirae asset", "miraeasset")),
+    ("DSP Mutual Fund", ("dsp mutual fund", "dsp mutual", "dspim")),
+    ("Aditya Birla Sun Life Mutual Fund", ("aditya birla sun life", "absl mutual fund", "birla sun life", "abslamc")),
+    ("Tata Mutual Fund", ("tata mutual fund", "tata mutual", "tatamutualfund")),
+    ("UTI Mutual Fund", ("uti mutual fund", "uti mutual", "utimf")),
+    ("Franklin Templeton Mutual Fund", ("franklin templeton", "franklintempleton")),
+    ("Canara Robeco Mutual Fund", ("canara robeco", "canararobeco")),
+    ("HSBC Mutual Fund", ("hsbc mutual fund", "hsbc asset management", "hsbc mf")),
+    ("Edelweiss Mutual Fund", ("edelweiss mutual fund", "edelweiss mf", "edelweiss")),
+    ("Bandhan Mutual Fund", ("bandhan mutual fund", "bandhan mf")),
+    ("Quant Mutual Fund", ("quant mutual fund", "quant mf", "quantum mutual fund")),
+    ("Motilal Oswal Mutual Fund", ("motilal oswal mutual fund", "motilal oswal", "motilaloswal")),
+    ("Invesco Mutual Fund", ("invesco mutual fund", "invesco")),
+    ("LIC Mutual Fund", ("lic mutual fund", "lic mf", "licmf")),
+    ("JM Financial Mutual Fund", ("jm financial mutual fund", "jm financial", "jmf")),
+    ("Mahindra Manulife Mutual Fund", ("mahindra manulife", "mahindramanulife")),
+    ("Union Mutual Fund", ("union mutual fund", "union mf")),
+    ("Bank of India Mutual Fund", ("bank of india mutual fund", "boi mutual fund", "boimf")),
+    ("Baroda BNP Paribas Mutual Fund", ("baroda bnp paribas", "barodabnpparibas")),
+    ("PGIM India Mutual Fund", ("pgim india mutual fund", "pgim india", "pgim")),
+    ("Navi Mutual Fund", ("navi mutual fund", "navi mf")),
+    ("Bajaj Finserv Mutual Fund", ("bajaj finserv mutual fund", "bajaj finserv amc")),
+]
+
+
+def _identify_fund_house(url: str, label: str, context: str) -> tuple[str, str]:
+    """Return a cautious AMC hint and the matching evidence, never a verification claim."""
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower()
+    label_context = f"{label or ''} {context or ''}".lower()
+    compact_url = re.sub(r"[^a-z0-9]", "", f"{host} {parsed.path}".lower())
+
+    for fund_house, aliases in _FUND_HOUSE_ALIASES:
+        for alias in aliases:
+            normalized_alias = alias.lower()
+            compact_alias = re.sub(r"[^a-z0-9]", "", normalized_alias)
+            # A recognizable AMC/domain slug in the link is the strongest available hint.
+            if compact_alias and len(compact_alias) >= 5 and compact_alias in compact_url:
+                return fund_house, "URL/domain hint — verify official source"
+            if re.search(rf"(?<![a-z0-9]){re.escape(normalized_alias)}(?![a-z0-9])", label_context):
+                return fund_house, "Page label/context hint — verify official source"
+    return "Unknown — verify manually", "No reliable AMC name detected"
+
+
 def _record(url: str, label: str, month: str, year: int, context: str, method: str) -> dict:
     parsed = urlparse(url)
     label = " ".join(str(label or "").split()) or Path(parsed.path).name or "Official source link"
+    fund_house, fund_house_evidence = _identify_fund_house(url, label, context)
     return {
+        "fund_house_hint": fund_house,
+        "fund_house_evidence": fund_house_evidence,
         "label": label[:240],
         "url": url,
+        "source_context": " ".join(str(context or "").split())[:500],
         "is_direct_pdf": parsed.path.lower().endswith(".pdf") or "pdf" in label.lower(),
         "period_keyword_match": _period_matches(f"{url} {label} {context}", month, year),
         "requested_period": f"{month} {year}",
         "discovered_at_utc": datetime.now(timezone.utc).isoformat(),
         "discovery_source": AMFI_FACTSHEET_URL,
         "discovery_method": method,
+        "verification_status": "Unverified — open the PDF and confirm AMC, scheme, and portfolio valuation date",
     }
 
 
