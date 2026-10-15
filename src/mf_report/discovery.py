@@ -336,24 +336,34 @@ def discover_factsheet_links(month: str, year: int, session: requests.Session | 
     """Discover selected-month factsheet links from the official AMFI factsheet page.
 
     Static parsing is the fast path. If it finds no period-qualified results, a
-    Chromium pass inspects the JavaScript-rendered AMC cards. Supplying a session
-    disables browser startup to keep tests deterministic.
+    Chromium pass inspects JavaScript-rendered AMC cards. Supplying a session disables
+    browser startup to keep tests deterministic.
     """
     client = session or requests.Session()
-    response = client.get(
-        AMFI_FACTSHEET_URL,
-        timeout=HTTP_TIMEOUT_SECONDS,
-        headers={"User-Agent": USER_AGENT},
-    )
-    response.raise_for_status()
-    found = _static_candidates(response.text, month, int(year))
-    if found:
-        return found
+    static_error = None
+    try:
+        response = client.get(
+            AMFI_FACTSHEET_URL,
+            timeout=HTTP_TIMEOUT_SECONDS,
+            headers={"User-Agent": USER_AGENT},
+        )
+        response.raise_for_status()
+        found = _static_candidates(response.text, month, int(year))
+        if found:
+            return found
+    except Exception as exc:
+        if session is not None:
+            raise
+        static_error = exc
+        LOG.warning("Static AMFI page fetch failed; trying browser fallback: %s", exc)
+
     if session is not None:
         return []
     dynamic, inspected = _playwright_candidates(month, int(year))
     found = _deduplicate(dynamic)
     if not found:
+        if static_error is not None:
+            LOG.warning("The AMFI browser fallback found no matching links after static fetch error: %s", static_error)
         LOG.info(
             "AMFI discovery finished for %s %s: no date-qualified PDF links found; inspected %s AMC card(s).",
             month, year, inspected,
