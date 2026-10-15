@@ -44,7 +44,7 @@ def _looks_like_other_scheme_heading(line):
     # AMC mastheads such as "HDFC Mutual Fund" identify the fund house, not a scheme.
     if normalized.endswith(" mutual fund") or normalized == "mutual fund":
         return False
-    return bool(re.search(r"\\b(?:fund|etf|fof)\\b", normalized))
+    return bool(re.search(r"\b(?:fund|etf|fof)\b", normalized))
 
 
 def audit_scheme_headings(page_texts, scheme):
