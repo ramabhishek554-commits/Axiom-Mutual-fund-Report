@@ -210,6 +210,7 @@ def _playwright_candidates(month: str, year: int) -> tuple[list[dict], int]:
 
             # Links in these AMC cards may appear only after client-side interaction.
             for name in names:
+                navigation_failed = False
                 try:
                     page.get_by_text(name, exact=True).first.click(timeout=1600)
                     page.wait_for_timeout(180)
@@ -232,7 +233,10 @@ def _playwright_candidates(month: str, year: int) -> tuple[list[dict], int]:
                         try:
                             page.goto(AMFI_FACTSHEET_URL, wait_until="domcontentloaded", timeout=HTTP_TIMEOUT_SECONDS * 1000)
                         except Exception:
-                            break
+                            navigation_failed = True
+                if navigation_failed:
+                    LOG.warning("Could not restore the AMFI page after inspecting card %r; stopping card scan.", name)
+                    break
             for source_url, payload in network_items:
                 found.extend(_payload_candidates(payload, month, year, source_url))
         finally:
