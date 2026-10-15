@@ -267,3 +267,35 @@ def test_competing_period_detection_accepts_two_digit_year_labels():
         "September",
         2026,
     )
+
+
+
+def test_payload_metadata_rejects_url_with_conflicting_month():
+    payload = {
+        "data": [
+            {
+                "month": "September",
+                "year": 2026,
+                "pdfUrl": "https://files.example.org/August-2026-factsheet.pdf",
+            }
+        ]
+    }
+    results = _payload_candidates(
+        payload, "September", 2026, "https://www.amfiindia.com/api/factsheets"
+    )
+    assert results == []
+
+
+def test_payload_metadata_must_be_explicit_on_pdf_record():
+    payload = {
+        "month": "September",
+        "year": 2026,
+        "data": [
+            {"pdfUrl": "https://files.example.org/factsheet.pdf"}
+        ],
+    }
+    # Root metadata is not inherited as proof for every child PDF.
+    results = _payload_candidates(
+        payload, "September", 2026, "https://www.amfiindia.com/api/factsheets"
+    )
+    assert results == []
