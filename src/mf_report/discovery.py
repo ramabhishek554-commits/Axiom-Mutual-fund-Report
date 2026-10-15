@@ -84,6 +84,19 @@ def _record(url: str, label: str, month: str, year: int, context: str, method: s
     }
 
 
+def _nearest_period_context(node, month: str, year: int) -> str:
+    """Return the nearest compact ancestor text that explicitly names the requested period."""
+    current = node
+    for _ in range(6):
+        if current is None:
+            break
+        value = " ".join(current.get_text(" ", strip=True).split())
+        if value and len(value) <= 500 and _period_matches(value, month, year):
+            return value
+        current = current.parent
+    return ""
+
+
 def _static_candidates(html: str, month: str, year: int) -> list[dict]:
     soup = BeautifulSoup(html, "html.parser")
     found: list[dict] = []
@@ -91,19 +104,10 @@ def _static_candidates(html: str, month: str, year: int) -> list[dict]:
         url = _is_https_url(anchor["href"])
         if not url:
             continue
-        contexts = []
-        node = anchor
-        for _ in range(4):
-            if not node:
-                break
-            text = " ".join(node.get_text(" ", strip=True).split())
-            if text:
-                contexts.append(text[:500])
-            node = node.parent
-        context = " | ".join(contexts)
         label = " ".join(
             [anchor.get_text(" ", strip=True), anchor.get("title", ""), anchor.get("aria-label", "")]
         ).strip()
+        context = _nearest_period_context(anchor, month, year)
         parsed = urlparse(url)
         is_pdf = parsed.path.lower().endswith(".pdf") or "pdf" in label.lower()
         all_text = f"{label} {context} {url}".lower()
@@ -266,20 +270,33 @@ def _select_period_if_available(page, month: str, year: int) -> None:
 def _dom_candidates(page, month: str, year: int) -> list[dict]:
     try:
         links = page.locator("a[href]").evaluate_all(
-            """anchors => anchors.map(a => {
-              const contexts = [];
+            """(anchors, target) => anchors.map(a => {
               let node = a;
-              for (let i = 0; node && i < 5; i++, node = node.parentElement) {
+              let matchedContext = '';
+              let nearestText = '';
+              for (let i = 0; node && i < 6; i++, node = node.parentElement) {
                 const text = (node.innerText || '').replace(/\\s+/g, ' ').trim();
-                if (text) contexts.push(text.slice(0, 500));
-                if (/\\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\\b.*\\b20\\d{2}\\b/i.test(text)) break;
+                if (!nearestText && text) nearestText = text.slice(0, 500);
+                if (text.length <= 500) {
+                  const lower = text.toLowerCase();
+                  const hasName = [target.month.toLowerCase(), target.short.toLowerCase()]
+                    .some(token => new RegExp('\\\\b' + token + '\\\\b', 'i').test(lower));
+                  const hasYear = new RegExp('\\\\b' + target.year + '\\\\b').test(lower);
+                  const numeric = new RegExp('\\\\b(?:0?' + target.month_num + ')[-_/. ]' + target.year +
+                    '\\\\b|\\\\b' + target.year + '[-_/. ]0?' + target.month_num + '\\\\b').test(lower);
+                  if ((hasName && hasYear) || numeric) {
+                    matchedContext = text;
+                    break;
+                  }
+                }
               }
               return {
                 href: a.href,
                 label: [a.innerText || '', a.getAttribute('aria-label') || '', a.title || ''].join(' ').trim(),
-                context: contexts.join(' | ')
+                context: matchedContext || nearestText
               };
-            })"""
+            })""",
+            {"month": month, "short": month.slice(0, 3), "month_num": MONTHS[month.toLowerCase()][1], "year": String(year)}
         )
     except Exception:
         return []
