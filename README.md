@@ -8,7 +8,8 @@ A Python/Streamlit research tool for reviewing Indian mutual-fund portfolios acr
 
 - Static AMFI link parsing, followed by Playwright/Chromium interaction with JavaScript-rendered AMC cards when the static page contains no month-qualified PDF links.
 - Strict month/year-qualified PDF filtering: explicit URL/label dates are preferred; nearby context must identify one unambiguous period. Generic filenames are accepted only after the AMC page/frame's month and year selectors are both confirmed, with no conflicting period evidence.
-- PDF/CSV upload, reviewable holdings extraction, portfolio overlap, sector and concentration analysis.
+- PDF/CSV upload, reviewable holdings extraction that can read repeated side-by-side portfolio columns and carries industry values only when a table header explicitly identifies them.
+- Equity-only metrics exclude `Unclassified` instruments until the user verifies whether each row is equity, debt, cash or another asset type.
 - Select multiple month-qualified AMC PDFs and download them as a ZIP with source URLs, SHA-256 checksums, timestamps and a manifest; the combined PDF payload is capped at 100 MiB.
 - Downloadable Excel workbook with the 11 requested sheets, plus automated tests and CI.
 
