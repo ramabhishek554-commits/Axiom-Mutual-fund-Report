@@ -66,6 +66,173 @@ def audit_scheme_headings(page_texts, scheme):
     return selected_found, sorted(other_titles)
 
 
+WEIGHT_HEADER_MARKERS = (
+    "% to nav", "% of nav", "percent to nav", "percentage to nav",
+    "% to net assets", "% of net assets", "percent of net assets",
+    "percentage of net assets", "weight (%)", "weight %", "portfolio weight",
+    "weight to nav",
+)
+
+
+def _header_weight_columns(cells):
+    """Return indexes whose headers explicitly describe portfolio percentages."""
+    result = []
+    for index, cell in enumerate(cells):
+        text = re.sub(r"\s+", " ", str(cell or "").strip().lower())
+        if any(marker in text for marker in WEIGHT_HEADER_MARKERS):
+            result.append(index)
+    return result
+
+
+def _find_table_headers(table):
+    """Find the row that best identifies holding-weight and sector columns."""
+    best_row, best_weights, best_sectors = None, [], []
+    for row_index, row in enumerate((table or [])[:10]):
+        cells = [str(cell or "").strip() for cell in (row or [])]
+        weights = _header_weight_columns(cells)
+        if len(weights) > len(best_weights):
+            best_row = row_index
+            best_weights = weights
+            best_sectors = [
+                index for index, cell in enumerate(cells)
+                if re.search(r"\b(?:industry|sector)\b", str(cell or ""), re.I)
+            ]
+    return best_row, best_weights, best_sectors
+
+
+def _infer_weight_columns(cells):
+    """Fallback for tables without recognizable headers; supports side-by-side 3-cell blocks."""
+    numeric_positions = [
+        index for index, cell in enumerate(cells)
+        if _number(cell) is not None and _number(cell) <= 100
+    ]
+    if not numeric_positions:
+        return []
+    if len(numeric_positions) >= 2 and len(cells) >= 6:
+        differences = [
+            right - left for left, right in zip(numeric_positions, numeric_positions[1:])
+        ]
+        # Side-by-side mini-tables often have identical repeated column spacing,
+        # e.g. company / industry / weight repeated across the page.
+        if differences and len(set(differences)) == 1 and differences[0] >= 3:
+            return numeric_positions
+    return [numeric_positions[-1]]
+
+
+def _rows_to_holding_records(
+    table,
+    scheme,
+    category,
+    valuation_date="",
+    source_url="",
+    source_pdf="",
+    page_no=1,
+    table_no=1,
+):
+    """Extract holdings from a table, including two portfolio columns on one PDF row."""
+    records = []
+    header_row, weight_columns, sector_columns = _find_table_headers(table)
+    if not weight_columns:
+        weight_columns = []
+
+    for row_index, row in enumerate(table or []):
+        cells = [re.sub(r"\s+", " ", str(cell or "")).strip() for cell in (row or [])]
+        if len(cells) < 2 or not any(cells):
+            continue
+
+        joined = " ".join(cells).lower()
+        if any(marker in joined for marker in WEIGHT_HEADER_MARKERS):
+            row_weights = _header_weight_columns(cells)
+            if row_weights:
+                weight_columns = row_weights
+                sector_columns = [
+                    index for index, cell in enumerate(cells)
+                    if re.search(r"\b(?:industry|sector)\b", str(cell or ""), re.I)
+                ]
+                continue
+        if header_row is not None and row_index == header_row:
+            continue
+
+        chosen_weight_columns = [
+            index for index in weight_columns
+            if index < len(cells) and _number(cells[index]) is not None
+        ]
+        if not chosen_weight_columns:
+            chosen_weight_columns = _infer_weight_columns(cells)
+        if not chosen_weight_columns:
+            continue
+
+        previous_weight_index = -1
+        for weight_index in chosen_weight_columns:
+            weight = _number(cells[weight_index])
+            if weight is None or not 0 <= weight <= 100:
+                previous_weight_index = weight_index
+                continue
+
+            segment_start = previous_weight_index + 1
+            segment = cells[segment_start:weight_index]
+            previous_weight_index = weight_index
+            if not segment:
+                continue
+
+            company_index = None
+            company = ""
+            for local_index, value in enumerate(segment):
+                normalized = re.sub(r"\s+", " ", value).strip().lower()
+                if (
+                    len(value) >= 3
+                    and not MONEY_RE.match(value)
+                    and _number(value) is None
+                    and normalized not in {
+                        "company/instrument", "company", "instrument", "industry",
+                        "sector", "industry/rating", "industry+ /rating",
+                    }
+                ):
+                    company_index = segment_start + local_index
+                    company = value
+                    break
+
+            if not company or len(company) > 180:
+                continue
+            folded = re.sub(r"[^a-z0-9]+", " ", company.lower()).strip()
+            if folded in {"sub total", "subtotal", "grand total", "total"}:
+                continue
+            if any(
+                phrase in folded
+                for phrase in (
+                    "percentage to nav", "percentage to net assets", "company instrument",
+                    "equity equity related", "debt debt related",
+                )
+            ):
+                continue
+
+            sector = ""
+            for sector_index in sector_columns:
+                if segment_start <= sector_index < weight_index and sector_index < len(cells):
+                    if sector_index != company_index:
+                        sector = cells[sector_index]
+                        break
+
+            records.append({
+                "scheme": scheme,
+                "category": category,
+                "company": company,
+                "normalized_company": normalize_company(company),
+                "weight_pct": weight,
+                "sector": sector,
+                "instrument_type": "Unclassified",
+                "valuation_date": valuation_date,
+                "source_url": source_url,
+                "source_pdf": source_pdf,
+                "page": page_no,
+                "table": table_no,
+                "extraction_method": "pdfplumber_table_heuristic",
+                "validation_status": "needs_manual_review",
+                "raw_row": " | ".join(cells),
+            })
+    return records
+
+
 def extract_pdf_tables(pdf_path, scheme, category, valuation_date="", source_url=""):
     records, path = [], Path(pdf_path)
     with pdfplumber.open(path) as pdf:
@@ -85,27 +252,28 @@ def extract_pdf_tables(pdf_path, scheme, category, valuation_date="", source_url
                 "scheme-specific PDF or split the AMC-wide PDF into one scheme per file first. "
                 "No holdings were tagged."
             )
+
         for page_no, page in enumerate(pdf.pages, 1):
             for table_no, table in enumerate(page.extract_tables() or [], 1):
-                for row in table or []:
-                    cells = [re.sub(r"\s+"," ",str(c or "")).strip() for c in row]
-                    if len(cells) < 2: continue
-                    joined = " ".join(cells).lower()
-                    if any(x in joined for x in ("name of instrument","percentage to net assets","portfolio disclosure")) and not any(_number(c) is not None for c in cells[1:]):
-                        continue
-                    company = next((c for c in cells if len(c)>=3 and not MONEY_RE.match(c) and _number(c) is None), "")
-                    nums = [_number(c) for c in cells]
-                    nums = [n for n in nums if n is not None]
-                    if not company or len(company)>180 or not nums or nums[-1]>100: continue
-                    records.append({"scheme":scheme,"category":category,"company":company,
-                        "normalized_company":normalize_company(company),"weight_pct":nums[-1],"sector":"",
-                        "instrument_type":"Unclassified","valuation_date":valuation_date,"source_url":source_url,
-                        "source_pdf":path.name,"page":page_no,"table":table_no,
-                        "extraction_method":"pdfplumber_table_heuristic","validation_status":"needs_manual_review",
-                        "raw_row":" | ".join(cells)})
-    cols = ["scheme","category","company","normalized_company","weight_pct","sector","instrument_type",
-        "valuation_date","source_url","source_pdf","page","table","extraction_method","validation_status","raw_row"]
-    return pd.DataFrame(records,columns=cols)
+                records.extend(
+                    _rows_to_holding_records(
+                        table,
+                        scheme,
+                        category,
+                        valuation_date,
+                        source_url,
+                        path.name,
+                        page_no,
+                        table_no,
+                    )
+                )
+
+    cols = [
+        "scheme", "category", "company", "normalized_company", "weight_pct", "sector",
+        "instrument_type", "valuation_date", "source_url", "source_pdf", "page", "table",
+        "extraction_method", "validation_status", "raw_row",
+    ]
+    return pd.DataFrame(records, columns=cols)
 
 def validate_holdings(df):
     rows = df.copy()
