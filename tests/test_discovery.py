@@ -1,6 +1,7 @@
 from src.mf_report.discovery import (
     _payload_candidates,
     _period_matches,
+    _identify_fund_house,
     discover_factsheet_links,
 )
 
@@ -56,3 +57,33 @@ def test_payload_discovery_uses_month_and_year_metadata():
 def test_discovery_rejects_insecure_http_links():
     html = '<a href="http://files.example.org/September-2026-factsheet.pdf">September 2026 PDF</a>'
     assert discover_factsheet_links("September", 2026, session=FakeSession(html)) == []
+
+
+def test_fund_house_hint_from_hdfc_domain():
+    fund_house, evidence = _identify_fund_house(
+        "https://files.hdfcfund.com/s3fs-public/2026-09/HDFC-factsheet.pdf",
+        "Download PDF",
+        "September 2026 factsheet",
+    )
+    assert fund_house == "HDFC Mutual Fund"
+    assert "URL/domain" in evidence
+
+
+def test_fund_house_hint_from_surrounding_context():
+    fund_house, evidence = _identify_fund_house(
+        "https://cdn.example.org/factsheet-september-2026.pdf",
+        "Download PDF",
+        "HDFC Mutual Fund | September 2026 | Factsheet",
+    )
+    assert fund_house == "HDFC Mutual Fund"
+    assert "context" in evidence
+
+
+def test_fund_house_remains_unknown_when_not_supported_by_evidence():
+    fund_house, evidence = _identify_fund_house(
+        "https://cdn.example.org/september-2026.pdf",
+        "Download PDF",
+        "September 2026 factsheet",
+    )
+    assert fund_house == "Unknown — verify manually"
+    assert evidence == "No reliable AMC name detected"
