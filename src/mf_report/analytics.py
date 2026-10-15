@@ -33,15 +33,51 @@ def overlap_pct(df, scheme_a, scheme_b):
     a, b = d[d.scheme.eq(scheme_a)], d[d.scheme.eq(scheme_b)]
     if a.empty or b.empty:
         return None
+
+    # If a date column exists, compare only the latest valuation date shared by
+    # both schemes. Missing/incompatible dates are unknown, not a reason to mix
+    # snapshots from different months.
     if "valuation_date" in d:
-        da = set(a.valuation_date.dropna().astype(str)) - {""}
-        db = set(b.valuation_date.dropna().astype(str)) - {""}
-        if da and db and da.isdisjoint(db):
+        parsed_dates = pd.to_datetime(d["valuation_date"], errors="coerce", utc=True).dt.normalize()
+        dates_a = set(parsed_dates.loc[a.index].dropna().tolist())
+        dates_b = set(parsed_dates.loc[b.index].dropna().tolist())
+        if not dates_a or not dates_b:
             return None
+        common_dates = sorted(dates_a.intersection(dates_b))
+        if not common_dates:
+            return None
+        latest_common_date = common_dates[-1]
+        a = a.loc[parsed_dates.loc[a.index].eq(latest_common_date).fillna(False)]
+        b = b.loc[parsed_dates.loc[b.index].eq(latest_common_date).fillna(False)]
+        if a.empty or b.empty:
+            return None
+
     wa = a.groupby("normalized_company").weight_pct.sum()
     wb = b.groupby("normalized_company").weight_pct.sum()
     common = wa.index.intersection(wb.index)
     return float(sum(min(float(wa[k]), float(wb[k])) for k in common))
+
+
+def _latest_snapshot_per_scheme(df):
+    """Keep each scheme's latest parseable valuation-date snapshot for current-state metrics."""
+    d = _usable(df)
+    if d.empty or "valuation_date" not in d:
+        return d
+    working = d.copy()
+    working["_parsed_valuation_date"] = pd.to_datetime(
+        working["valuation_date"], errors="coerce", utc=True
+    ).dt.normalize()
+    snapshots = []
+    for _scheme, group in working.groupby("scheme", dropna=False, sort=False):
+        dated = group["_parsed_valuation_date"].dropna()
+        if dated.empty:
+            snapshots.append(group)
+        else:
+            latest_date = dated.max()
+            snapshots.append(group[group["_parsed_valuation_date"].eq(latest_date)])
+    if not snapshots:
+        return d.iloc[0:0].copy()
+    return pd.concat(snapshots, ignore_index=False).drop(columns=["_parsed_valuation_date"])
 
 def overlap_matrix(df):
     d = _usable(df)
@@ -54,12 +90,12 @@ def overlap_matrix(df):
     return m.reset_index()
 
 def sector_exposure(df):
-    d = _usable(df)
+    d = _latest_snapshot_per_scheme(df)
     d["sector"] = d.sector.fillna("").astype(str).str.strip().replace("", "Unknown / unmapped")
     return d.groupby(["scheme", "category", "sector"], as_index=False, dropna=False).weight_pct.sum().sort_values(["scheme", "weight_pct"], ascending=[True, False])
 
 def concentration_analysis(df):
-    d = _usable(df)
+    d = _latest_snapshot_per_scheme(df)
     rows = []
     for scheme, g in d.groupby("scheme"):
         weights = g.groupby("normalized_company").weight_pct.sum().sort_values(ascending=False)
@@ -74,7 +110,7 @@ def concentration_analysis(df):
     return pd.DataFrame(rows)
 
 def company_comparison(df, investment_amount):
-    d = _usable(df)
+    d = _latest_snapshot_per_scheme(df)
     if d.empty:
         return pd.DataFrame(columns=["company", "scheme", "category", "weight_pct", "estimated_allocation_inr", "sector"])
     d = d.copy()
