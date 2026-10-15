@@ -1,6 +1,8 @@
 from src.mf_report.discovery import (
     _payload_candidates,
     _period_matches,
+    _dom_selected_period_pdfs,
+    _confirmed_period_pdfs,
     _identify_fund_house,
     discover_factsheet_links,
 )
@@ -87,3 +89,57 @@ def test_fund_house_remains_unknown_when_not_supported_by_evidence():
     )
     assert fund_house == "Unknown — verify manually"
     assert evidence == "No reliable AMC name detected"
+
+
+def test_selected_period_pdf_scan_excludes_other_month_and_undated_pdf():
+    class FakeLocator:
+        def evaluate_all(self, _script):
+            return [
+                {
+                    "href": "https://cdn.example.org/September-2026-factsheet.pdf",
+                    "label": "Download PDF",
+                    "context": "September 2026 factsheet",
+                },
+                {
+                    "href": "https://cdn.example.org/August-2026-factsheet.pdf",
+                    "label": "Download PDF",
+                    "context": "August 2026 factsheet",
+                },
+                {
+                    "href": "https://cdn.example.org/factsheet.pdf",
+                    "label": "Download PDF",
+                    "context": "Download latest",
+                },
+            ]
+
+    class FakePage:
+        def locator(self, _selector):
+            return FakeLocator()
+
+    results = _dom_selected_period_pdfs(FakePage(), "September", 2026)
+    assert [row["url"] for row in results] == [
+        "https://cdn.example.org/September-2026-factsheet.pdf"
+    ]
+    assert all(row["period_keyword_match"] for row in results)
+
+
+def test_confirmed_results_only_contain_date_matched_pdf_candidates():
+    records = [
+        {
+            "url": "https://cdn.example.org/September-2026.pdf",
+            "is_direct_pdf": True,
+            "period_keyword_match": True,
+        },
+        {
+            "url": "https://cdn.example.org/August-2026.pdf",
+            "is_direct_pdf": True,
+            "period_keyword_match": False,
+        },
+        {
+            "url": "https://cdn.example.org/September-2026",
+            "is_direct_pdf": False,
+            "period_keyword_match": True,
+        },
+    ]
+    results = _confirmed_period_pdfs(records)
+    assert [row["url"] for row in results] == ["https://cdn.example.org/September-2026.pdf"]
