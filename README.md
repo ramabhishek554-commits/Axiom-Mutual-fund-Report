@@ -77,7 +77,7 @@ CI checks Python 3.10 and 3.12, compilation and tests. Synthetic records in test
 
 ## Local data folders
 
-The app creates `data/raw_factsheets`, `data/processed`, `data/reference`, `reports/excel`, `reports/dashboard`, and `logs`. These local data/output folders are git-ignored. PDF downloads are HTTPS-only, size-limited and SHA-256 recorded in a manifest. Respect AMFI/AMC site terms and rate limits.
+The app creates `data/raw_factsheets`, `data/processed`, `data/reference`, `reports/excel`, `reports/dashboard`, and `logs`. These local data/output folders are git-ignored. PDF downloads require HTTPS both before and after redirects, are size-limited, checked for the PDF signature, and SHA-256 recorded in a manifest. Respect AMFI/AMC site terms and rate limits.
 
 ## Limitations
 
