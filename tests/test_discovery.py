@@ -299,3 +299,33 @@ def test_payload_metadata_must_be_explicit_on_pdf_record():
         payload, "September", 2026, "https://www.amfiindia.com/api/factsheets"
     )
     assert results == []
+
+
+
+def test_portfolio_valuation_date_is_not_mistaken_for_factsheet_month():
+    context = (
+        "HDFC Large Cap Fund Factsheet September 2026; "
+        "portfolio valuation date: 2026-08-31"
+    )
+    assert _context_has_competing_period(context, "September", 2026) is False
+    matched, evidence = _period_evidence(
+        "https://cdn.example.org/factsheet.pdf",
+        "Download PDF",
+        context,
+        "September",
+        2026,
+    )
+    assert matched is True
+    assert evidence == "Nearby context uniquely identifies selected month/year"
+
+
+def test_as_of_previous_month_does_not_conflict_with_factsheet_publication_month():
+    context = "September 2026 factsheet. Data is as of August 31, 2026."
+    assert _context_has_competing_period(context, "September", 2026) is False
+    assert _period_evidence(
+        "https://cdn.example.org/factsheet.pdf",
+        "Download PDF",
+        context,
+        "September",
+        2026,
+    )[0] is True
