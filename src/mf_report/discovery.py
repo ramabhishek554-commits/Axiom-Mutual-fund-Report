@@ -76,11 +76,28 @@ def _period_matches(text: str, month: str, year: int) -> bool:
     return False
 
 def _context_has_competing_period(text: str, month: str, year: int) -> bool:
-    """Flag nearby text that mentions a different month/year as well as the target."""
+    """Flag competing factsheet periods, ignoring explicitly labelled valuation dates."""
     value = str(text or "").lower()
     target_month = month.strip().lower()
     target_year = int(year)
     target_number = int(MONTHS.get(target_month, ("", "0"))[1])
+
+    # A September factsheet commonly reports its portfolio as of 31 August.
+    # That portfolio valuation date is not evidence of an August factsheet.
+    month_words = "|".join(
+        re.escape(alias)
+        for month_name, aliases in MONTHS.items()
+        for alias in (month_name, aliases[0])
+    )
+    valuation_date_patterns = (
+        r"(?:portfolio\s+)?valuation\s+date\s*[:=-]?\s*\d{4}[-_/.]\d{1,2}(?:[-_/.]\d{1,2})?",
+        r"(?:portfolio\s+)?valuation\s+date\s*[:=-]?\s*(?:" + month_words + r")\s+\d{1,2},?\s+(?:20\d{2}|\d{2})",
+        r"(?:data\s+(?:is\s+)?)?as\s+of\s+\d{4}[-_/.]\d{1,2}(?:[-_/.]\d{1,2})?",
+        r"(?:data\s+(?:is\s+)?)?as\s+of\s+(?:" + month_words + r")\s+\d{1,2},?\s+(?:20\d{2}|\d{2})",
+        r"\bas\s+on\s+(?:" + month_words + r")\s+\d{1,2},?\s+(?:20\d{2}|\d{2})",
+    )
+    for pattern in valuation_date_patterns:
+        value = re.sub(pattern, " ", value, flags=re.I)
 
     # Month-name references such as "August 2026", "Sep-2025", or "Aug'26".
     for month_name, (short_name, _number) in MONTHS.items():
