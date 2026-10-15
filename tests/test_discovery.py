@@ -1,0 +1,331 @@
+from src.mf_report.discovery import (
+    _payload_candidates,
+    _period_matches,
+    _period_evidence,
+    _context_has_competing_period,
+    _dom_selected_period_pdfs,
+    _confirmed_period_pdfs,
+    _identify_fund_house,
+    discover_factsheet_links,
+)
+
+class FakeResponse:
+    def __init__(self, text):
+        self.text = text
+
+    def raise_for_status(self):
+        return None
+
+class FakeSession:
+    def __init__(self, text):
+        self.response = FakeResponse(text)
+
+    def get(self, *args, **kwargs):
+        return self.response
+
+def test_period_matching_accepts_month_name_and_numeric_format():
+    assert _period_matches("September 2026 factsheet.pdf", "September", 2026)
+    assert _period_matches("factsheet_09-2026.pdf", "September", 2026)
+    assert not _period_matches("August 2026 factsheet.pdf", "September", 2026)
+
+def test_static_discovery_finds_selected_period_pdf():
+    html = """
+    <html><body>
+      <section><h3>September 2026</h3>
+        <a href="https://files.example.org/september-2026-factsheet.pdf">Download PDF</a>
+      </section>
+    </body></html>
+    """
+    results = discover_factsheet_links("September", 2026, session=FakeSession(html))
+    assert len(results) == 1
+    assert results[0]["url"] == "https://files.example.org/september-2026-factsheet.pdf"
+    assert results[0]["is_direct_pdf"] is True
+    assert results[0]["discovery_method"] == "static_html"
+
+def test_static_discovery_does_not_return_other_month():
+    html = '<a href="https://files.example.org/august-2026-factsheet.pdf">August 2026 PDF</a>'
+    results = discover_factsheet_links("September", 2026, session=FakeSession(html))
+    assert results == []
+
+def test_payload_discovery_uses_month_and_year_metadata():
+    payload = {
+        "data": [
+            {"month": "September", "year": 2026, "pdfUrl": "https://files.example.org/factsheet.pdf"},
+            {"month": "August", "year": 2026, "pdfUrl": "https://files.example.org/old-factsheet.pdf"},
+        ]
+    }
+    results = _payload_candidates(payload, "September", 2026, "https://www.amfiindia.com/api/factsheets")
+    assert [item["url"] for item in results] == ["https://files.example.org/factsheet.pdf"]
+    assert results[0]["discovery_method"] == "amfi_json"
+
+def test_discovery_rejects_insecure_http_links():
+    html = '<a href="http://files.example.org/September-2026-factsheet.pdf">September 2026 PDF</a>'
+    assert discover_factsheet_links("September", 2026, session=FakeSession(html)) == []
+
+
+def test_fund_house_hint_from_hdfc_domain():
+    fund_house, evidence = _identify_fund_house(
+        "https://files.hdfcfund.com/s3fs-public/2026-09/HDFC-factsheet.pdf",
+        "Download PDF",
+        "September 2026 factsheet",
+    )
+    assert fund_house == "HDFC Mutual Fund"
+    assert "URL/domain" in evidence
+
+
+def test_fund_house_hint_from_surrounding_context():
+    fund_house, evidence = _identify_fund_house(
+        "https://cdn.example.org/factsheet-september-2026.pdf",
+        "Download PDF",
+        "HDFC Mutual Fund | September 2026 | Factsheet",
+    )
+    assert fund_house == "HDFC Mutual Fund"
+    assert "context" in evidence
+
+
+def test_fund_house_remains_unknown_when_not_supported_by_evidence():
+    fund_house, evidence = _identify_fund_house(
+        "https://cdn.example.org/september-2026.pdf",
+        "Download PDF",
+        "September 2026 factsheet",
+    )
+    assert fund_house == "Unknown — verify manually"
+    assert evidence == "No reliable AMC name detected"
+
+
+def test_selected_period_pdf_scan_excludes_other_month_and_undated_pdf():
+    class FakeLocator:
+        def evaluate_all(self, _script):
+            return [
+                {
+                    "href": "https://cdn.example.org/September-2026-factsheet.pdf",
+                    "label": "Download PDF",
+                    "context": "September 2026 factsheet",
+                },
+                {
+                    "href": "https://cdn.example.org/August-2026-factsheet.pdf",
+                    "label": "Download PDF",
+                    "context": "August 2026 factsheet",
+                },
+                {
+                    "href": "https://cdn.example.org/factsheet.pdf",
+                    "label": "Download PDF",
+                    "context": "Download latest",
+                },
+            ]
+
+    class FakePage:
+        def locator(self, _selector):
+            return FakeLocator()
+
+    results = _dom_selected_period_pdfs(FakePage(), "September", 2026)
+    assert [row["url"] for row in results] == [
+        "https://cdn.example.org/September-2026-factsheet.pdf"
+    ]
+    assert all(row["period_keyword_match"] for row in results)
+
+
+def test_confirmed_results_only_contain_date_matched_pdf_candidates():
+    records = [
+        {
+            "url": "https://cdn.example.org/September-2026.pdf",
+            "is_direct_pdf": True,
+            "period_keyword_match": True,
+        },
+        {
+            "url": "https://cdn.example.org/August-2026.pdf",
+            "is_direct_pdf": True,
+            "period_keyword_match": False,
+        },
+        {
+            "url": "https://cdn.example.org/September-2026",
+            "is_direct_pdf": False,
+            "period_keyword_match": True,
+        },
+    ]
+    results = _confirmed_period_pdfs(records)
+    assert [row["url"] for row in results] == ["https://cdn.example.org/September-2026.pdf"]
+
+
+
+def test_period_evidence_accepts_unambiguous_context():
+    matched, evidence = _period_evidence(
+        "https://cdn.example.org/factsheet.pdf",
+        "Download PDF",
+        "HDFC Mutual Fund — September 2026 factsheet",
+        "September",
+        2026,
+    )
+    assert matched is True
+    assert evidence == "Nearby context uniquely identifies selected month/year"
+
+
+def test_period_evidence_rejects_context_listing_multiple_periods():
+    context = "Monthly factsheets: September 2026, August 2026 and July 2026"
+    assert _context_has_competing_period(context, "September", 2026) is True
+    matched, evidence = _period_evidence(
+        "https://cdn.example.org/factsheet.pdf",
+        "Download PDF",
+        context,
+        "September",
+        2026,
+    )
+    assert matched is False
+    assert evidence == "Nearby context contains multiple months/years"
+
+
+def test_explicit_pdf_url_period_wins_over_broad_context():
+    matched, evidence = _period_evidence(
+        "https://cdn.example.org/september-2026-factsheet.pdf",
+        "Download PDF",
+        "Monthly factsheets: September 2026, August 2026 and July 2026",
+        "September",
+        2026,
+    )
+    assert matched is True
+    assert evidence == "URL contains selected month/year"
+
+
+def test_period_evidence_handles_numeric_competing_months():
+    assert _context_has_competing_period(
+        "Available reports: 09-2026 and 08-2026", "September", 2026
+    ) is True
+
+
+
+def test_generic_pdf_requires_confirmed_month_and_year_controls():
+    class FakeLocator:
+        def evaluate_all(self, _script):
+            return [
+                {
+                    "href": "https://cdn.example.org/factsheet.pdf",
+                    "label": "Download PDF",
+                    "context": "Download latest",
+                },
+                {
+                    "href": "https://cdn.example.org/August-2026.pdf",
+                    "label": "Download PDF",
+                    "context": "August 2026 factsheet",
+                },
+            ]
+
+    class FakePage:
+        def locator(self, _selector):
+            return FakeLocator()
+
+    unconfirmed = _dom_selected_period_pdfs(FakePage(), "September", 2026)
+    assert unconfirmed == []
+
+    confirmed = _dom_selected_period_pdfs(
+        FakePage(), "September", 2026, selector_confirmed=True
+    )
+    assert [row["url"] for row in confirmed] == [
+        "https://cdn.example.org/factsheet.pdf"
+    ]
+    assert confirmed[0]["period_keyword_match"] is True
+    assert confirmed[0]["period_evidence"] == (
+        "Month/year controls confirmed in the same AMC page/frame"
+    )
+
+
+def test_confirmed_controls_do_not_admit_mixed_month_context():
+    class FakeLocator:
+        def evaluate_all(self, _script):
+            return [
+                {
+                    "href": "https://cdn.example.org/factsheet.pdf",
+                    "label": "Download PDF",
+                    "context": "Monthly PDFs: September 2026, August 2026",
+                }
+            ]
+
+    class FakePage:
+        def locator(self, _selector):
+            return FakeLocator()
+
+    assert _dom_selected_period_pdfs(
+        FakePage(), "September", 2026, selector_confirmed=True
+    ) == []
+
+
+
+def test_period_matching_accepts_two_digit_year_labels():
+    assert _period_matches("HDFC Large Cap Fund_September 26.pdf", "September", 2026)
+    assert _period_matches("factsheet_09-26.pdf", "September", 2026)
+    assert _period_matches("Sep'26 Factsheet.pdf", "September", 2026)
+    assert not _period_matches("August 26 factsheet.pdf", "September", 2026)
+
+
+def test_competing_period_detection_accepts_two_digit_year_labels():
+    assert _context_has_competing_period(
+        "Monthly factsheets: September 26 and August 26",
+        "September",
+        2026,
+    )
+    assert _context_has_competing_period(
+        "Available reports: 09-26 and 08-26",
+        "September",
+        2026,
+    )
+
+
+
+def test_payload_metadata_rejects_url_with_conflicting_month():
+    payload = {
+        "data": [
+            {
+                "month": "September",
+                "year": 2026,
+                "pdfUrl": "https://files.example.org/August-2026-factsheet.pdf",
+            }
+        ]
+    }
+    results = _payload_candidates(
+        payload, "September", 2026, "https://www.amfiindia.com/api/factsheets"
+    )
+    assert results == []
+
+
+def test_payload_metadata_must_be_explicit_on_pdf_record():
+    payload = {
+        "month": "September",
+        "year": 2026,
+        "data": [
+            {"pdfUrl": "https://files.example.org/factsheet.pdf"}
+        ],
+    }
+    # Root metadata is not inherited as proof for every child PDF.
+    results = _payload_candidates(
+        payload, "September", 2026, "https://www.amfiindia.com/api/factsheets"
+    )
+    assert results == []
+
+
+
+def test_portfolio_valuation_date_is_not_mistaken_for_factsheet_month():
+    context = (
+        "HDFC Large Cap Fund Factsheet September 2026; "
+        "portfolio valuation date: 2026-08-31"
+    )
+    assert _context_has_competing_period(context, "September", 2026) is False
+    matched, evidence = _period_evidence(
+        "https://cdn.example.org/factsheet.pdf",
+        "Download PDF",
+        context,
+        "September",
+        2026,
+    )
+    assert matched is True
+    assert evidence == "Nearby context uniquely identifies selected month/year"
+
+
+def test_as_of_previous_month_does_not_conflict_with_factsheet_publication_month():
+    context = "September 2026 factsheet. Data is as of August 31, 2026."
+    assert _context_has_competing_period(context, "September", 2026) is False
+    assert _period_evidence(
+        "https://cdn.example.org/factsheet.pdf",
+        "Download PDF",
+        context,
+        "September",
+        2026,
+    )[0] is True
