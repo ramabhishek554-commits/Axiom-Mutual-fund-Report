@@ -71,7 +71,7 @@ def _context_has_competing_period(text: str, month: str, year: int) -> bool:
     for month_name, (short_name, _number) in MONTHS.items():
         pattern = re.compile(
             rf"(?<![a-z])(?:{re.escape(month_name)}|{re.escape(short_name)})"
-            rf"[\\s._/-]+(20\\d{{2}})(?!\\d)",
+            rf"[\s._/-]+(20\d{{2}})(?!\d)",
             re.I,
         )
         for match in pattern.finditer(value):
@@ -81,8 +81,8 @@ def _context_has_competing_period(text: str, month: str, year: int) -> bool:
 
     # Numeric month/year forms such as 08-2026 or 2026/08.
     numeric = re.compile(
-        r"(?<!\\d)(0?[1-9]|1[0-2])[-_/. ](20\\d{2})(?!\\d)"
-        r"|(?<!\\d)(20\\d{2})[-_/. ](0?[1-9]|1[0-2])(?!\\d)"
+        r"(?<!\d)(0?[1-9]|1[0-2])[-_/. ](20\d{2})(?!\d)"
+        r"|(?<!\d)(20\d{2})[-_/. ](0?[1-9]|1[0-2])(?!\d)"
     )
     target_number = int(MONTHS.get(target_month, ("", "0"))[1])
     for match in numeric.finditer(value):
