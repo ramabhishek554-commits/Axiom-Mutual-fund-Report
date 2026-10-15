@@ -1,6 +1,8 @@
 from src.mf_report.discovery import (
     _payload_candidates,
     _period_matches,
+    _period_evidence,
+    _context_has_competing_period,
     _dom_selected_period_pdfs,
     _confirmed_period_pdfs,
     _identify_fund_house,
@@ -143,3 +145,48 @@ def test_confirmed_results_only_contain_date_matched_pdf_candidates():
     ]
     results = _confirmed_period_pdfs(records)
     assert [row["url"] for row in results] == ["https://cdn.example.org/September-2026.pdf"]
+
+
+
+def test_period_evidence_accepts_unambiguous_context():
+    matched, evidence = _period_evidence(
+        "https://cdn.example.org/factsheet.pdf",
+        "Download PDF",
+        "HDFC Mutual Fund — September 2026 factsheet",
+        "September",
+        2026,
+    )
+    assert matched is True
+    assert evidence == "Nearby context uniquely identifies selected month/year"
+
+
+def test_period_evidence_rejects_context_listing_multiple_periods():
+    context = "Monthly factsheets: September 2026, August 2026 and July 2026"
+    assert _context_has_competing_period(context, "September", 2026) is True
+    matched, evidence = _period_evidence(
+        "https://cdn.example.org/factsheet.pdf",
+        "Download PDF",
+        context,
+        "September",
+        2026,
+    )
+    assert matched is False
+    assert evidence == "Nearby context contains multiple months/years"
+
+
+def test_explicit_pdf_url_period_wins_over_broad_context():
+    matched, evidence = _period_evidence(
+        "https://cdn.example.org/september-2026-factsheet.pdf",
+        "Download PDF",
+        "Monthly factsheets: September 2026, August 2026 and July 2026",
+        "September",
+        2026,
+    )
+    assert matched is True
+    assert evidence == "URL contains selected month/year"
+
+
+def test_period_evidence_handles_numeric_competing_months():
+    assert _context_has_competing_period(
+        "Available reports: 09-2026 and 08-2026", "September", 2026
+    ) is True
