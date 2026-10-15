@@ -69,8 +69,8 @@ with discover:
                 f"Search completed for {period}: {len(links)} PDF candidate(s) with matching month/year evidence."
             )
             st.info(
-                "Only PDF candidates with explicit URL/label dates or a nearby context that uniquely identifies the selected month and year are shown. "
-                "Links in a container listing multiple months are omitted unless the URL or label itself identifies the selected period. "
+                "Only PDF candidates with explicit URL/label dates, unambiguous nearby date context, or confirmed month/year controls on the same AMC page/frame are shown. "
+                "Links in a container listing multiple months are omitted unless the URL/label identifies the selected period or the AMC's month/year controls were confirmed in that same view. "
                 "**Fund house hints remain unverified**: open the PDF and confirm the AMC, exact scheme, factsheet month, "
                 "and portfolio valuation date before analysis."
             )
