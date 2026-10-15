@@ -60,7 +60,8 @@ streamlit run app.py
 ## Calculation definitions
 
 - Estimated investor allocation = assumed amount × holding percentage / 100. Default assumed amount is ₹1,00,000; it is not a disclosed scheme market value.
-- Pairwise equity overlap (%) = sum of minimum matched issuer weights, when weights are expressed as percentage points. Comparisons with incompatible known valuation dates are returned as unknown.
+- Pairwise equity overlap (%) = sum of minimum matched issuer weights, when weights are expressed as percentage points. When schemes have multiple snapshots, compare only the latest valuation date shared by both; missing or incompatible dates return unknown. Current-state concentration, sector exposure and company comparison use each scheme's latest parseable valuation-date snapshot, while Historical Changes retains all dates.
+- Duplicate-issuer checks and portfolio-weight totals are evaluated within each scheme and valuation date; rows from different months are not treated as duplicates.
 - HHI = sum of squared decimal issuer weights. Effective holdings = 1 / HHI.
 - Sector labels are taken only from supplied data; unknown sectors remain unknown.
 - Historical weight changes do not establish purchases or sales. Concentration and overlap can be misleading if holdings are partial or dates are not comparable.
