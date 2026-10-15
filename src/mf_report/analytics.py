@@ -14,7 +14,7 @@ def _usable(df):
     required = {"scheme", "company", "weight_pct"}
     if not required.issubset(df.columns):
         return pd.DataFrame(columns=list(required))
-    d = df.copy()
+    d = df.copy().reset_index(drop=True)
     d["weight_pct"] = pd.to_numeric(d["weight_pct"], errors="coerce")
     d = d.dropna(subset=["scheme", "company", "weight_pct"])
     d = d[d.weight_pct.between(0, 100)]
@@ -125,11 +125,17 @@ def historical_changes(df):
     d = _usable(df)
     rows = []
     for scheme, g in d.groupby("scheme"):
-        dates = sorted(g.valuation_date.dropna().astype(str).unique())
-        for before, after in zip(dates, dates[1:]):
-            a = g[g.valuation_date.astype(str).eq(before)].groupby("normalized_company").weight_pct.sum()
-            b = g[g.valuation_date.astype(str).eq(after)].groupby("normalized_company").weight_pct.sum()
-            names = g.drop_duplicates("normalized_company").set_index("normalized_company").company.to_dict()
+        working = g.copy()
+        working["_parsed_valuation_date"] = pd.to_datetime(
+            working["valuation_date"], errors="coerce", utc=True
+        ).dt.normalize()
+        dates = sorted(working["_parsed_valuation_date"].dropna().unique())
+        names = g.drop_duplicates("normalized_company").set_index("normalized_company").company.to_dict()
+        for before_date, after_date in zip(dates, dates[1:]):
+            a = working[working["_parsed_valuation_date"].eq(before_date)].groupby("normalized_company").weight_pct.sum()
+            b = working[working["_parsed_valuation_date"].eq(after_date)].groupby("normalized_company").weight_pct.sum()
+            before = pd.Timestamp(before_date).strftime("%Y-%m-%d")
+            after = pd.Timestamp(after_date).strftime("%Y-%m-%d")
             for key in sorted(set(a.index) | set(b.index)):
                 x, y = float(a.get(key, 0)), float(b.get(key, 0))
                 if x != y:
