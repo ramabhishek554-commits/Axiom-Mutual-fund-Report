@@ -1,7 +1,12 @@
 import io
 import pandas as pd
 from openpyxl import load_workbook
-from src.mf_report.extract import normalize_company, validate_holdings, audit_scheme_headings
+from src.mf_report.extract import (
+    normalize_company,
+    validate_holdings,
+    audit_scheme_headings,
+    _rows_to_holding_records,
+)
 from src.mf_report.workbook import build_workbook, validate_workbook, SHEETS
 
 def test_company_normalization(): assert normalize_company("Example Industries Ltd.")=="example"
@@ -75,3 +80,73 @@ def test_scheme_heading_audit_does_not_accept_unrelated_scheme():
     )
     assert found is False
     assert "hdfc small cap fund" in others
+
+
+
+def test_table_extractor_reads_both_portfolio_columns_and_sector_headers():
+    table = [
+        [
+            "Company/Instrument", "Industry+ /Rating", "% to NAV",
+            "Company/Instrument", "Industry+ /Rating", "% to NAV",
+        ],
+        [
+            "ICICI Bank Ltd.", "Banks", "10.05",
+            "Tata Capital Ltd.", "Finance", "0.75",
+        ],
+        [
+            "Sub Total", "", "98.58",
+            "Grand Total", "", "100.00",
+        ],
+    ]
+    rows = _rows_to_holding_records(
+        table,
+        "HDFC Large Cap Fund",
+        "Large Cap",
+        "2026-08-31",
+        "https://amc.example/factsheet.pdf",
+        "factsheet.pdf",
+        2,
+        1,
+    )
+    assert [row["company"] for row in rows] == [
+        "ICICI Bank Ltd.",
+        "Tata Capital Ltd.",
+    ]
+    assert [row["weight_pct"] for row in rows] == [10.05, 0.75]
+    assert [row["sector"] for row in rows] == ["Banks", "Finance"]
+    assert all(row["validation_status"] == "needs_manual_review" for row in rows)
+    assert all(row["page"] == 2 for row in rows)
+
+
+def test_table_extractor_fallback_reads_repeated_weight_blocks_without_header():
+    table = [
+        ["ICICI Bank Ltd.", "Banks", "10.05", "Tata Capital Ltd.", "Finance", "0.75"],
+    ]
+    rows = _rows_to_holding_records(
+        table,
+        "HDFC Large Cap Fund",
+        "Large Cap",
+        "2026-08-31",
+        "",
+        "factsheet.pdf",
+        3,
+        1,
+    )
+    assert [(row["company"], row["weight_pct"]) for row in rows] == [
+        ("ICICI Bank Ltd.", 10.05),
+        ("Tata Capital Ltd.", 0.75),
+    ]
+    # Without a reliable industry header, the fallback must not guess sectors.
+    assert all(row["sector"] == "" for row in rows)
+
+
+def test_table_extractor_skips_headers_and_aggregate_rows():
+    table = [
+        ["Company", "Industry", "% to NAV"],
+        ["Sub Total", "", "98.58"],
+        ["Grand Total", "", "100.00"],
+    ]
+    rows = _rows_to_holding_records(
+        table, "HDFC Large Cap Fund", "Large Cap", "2026-08-31", "", "factsheet.pdf"
+    )
+    assert rows == []
