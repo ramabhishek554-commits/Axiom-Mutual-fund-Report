@@ -52,13 +52,13 @@ def _period_matches(text: str, month: str, year: int) -> bool:
 
     # Named month with a full year, e.g. "September 2026" or "Sep-2026".
     if re.search(
-        rf"(?<![a-z]){month_pattern}[\\s._/'-]*{re.escape(year_text)}(?!\\d)", value
+        rf"(?<![a-z]){month_pattern}[\s._/'-]*{re.escape(year_text)}(?!\d)", value
     ):
         return True
     # AMCs often label monthly files with a two-digit year: "September 26" or "Sep'26".
     if re.search(
         rf"(?<![a-z])(?:{re.escape(month_name)}|{re.escape(aliases[0])})"
-        rf"[\\s._/'-]*(?<!\\d){re.escape(short_year)}(?!\\d)",
+        rf"[\s._/'-]*(?<!\d){re.escape(short_year)}(?!\d)",
         value,
     ):
         return True
@@ -66,11 +66,11 @@ def _period_matches(text: str, month: str, year: int) -> bool:
     month_num = aliases[1]
     if month_num:
         patterns = (
-            rf"(?<!\\d)0?{month_num}[-_/. ]{year_text}(?!\\d)",
-            rf"(?<!\\d){year_text}[-_/. ]0?{month_num}(?!\\d)",
-            rf"(?<!\\d){int(month_num)}[-_/. ]{year_text}(?!\\d)",
-            rf"(?<!\\d){year_text}[-_/. ]{int(month_num)}(?!\\d)",
-            rf"(?<!\\d)0?{month_num}[-_/. ]{short_year}(?!\\d)",
+            rf"(?<!\d)0?{month_num}[-_/. ]{year_text}(?!\d)",
+            rf"(?<!\d){year_text}[-_/. ]0?{month_num}(?!\d)",
+            rf"(?<!\d){int(month_num)}[-_/. ]{year_text}(?!\d)",
+            rf"(?<!\d){year_text}[-_/. ]{int(month_num)}(?!\d)",
+            rf"(?<!\d)0?{month_num}[-_/. ]{short_year}(?!\d)",
         )
         return any(re.search(pattern, value) for pattern in patterns)
     return False
@@ -86,7 +86,7 @@ def _context_has_competing_period(text: str, month: str, year: int) -> bool:
     for month_name, (short_name, _number) in MONTHS.items():
         pattern = re.compile(
             rf"(?<![a-z])(?:{re.escape(month_name)}|{re.escape(short_name)})"
-            rf"[\\s._/'-]*(20\\d{{2}}|\\d{{2}})(?!\\d)",
+            rf"[\s._/'-]*(20\d{{2}}|\d{{2}})(?!\d)",
             re.I,
         )
         for match in pattern.finditer(value):
@@ -98,8 +98,8 @@ def _context_has_competing_period(text: str, month: str, year: int) -> bool:
 
     # Numeric month/year formats such as 08-2026, 2026/08, or 08-26.
     numeric = re.compile(
-        r"(?<!\\d)(0?[1-9]|1[0-2])[-_/. ](20\\d{2}|\\d{2})(?!\\d)"
-        r"|(?<!\\d)(20\\d{2})[-_/. ](0?[1-9]|1[0-2])(?!\\d)"
+        r"(?<!\d)(0?[1-9]|1[0-2])[-_/. ](20\d{2}|\d{2})(?!\d)"
+        r"|(?<!\d)(20\d{2})[-_/. ](0?[1-9]|1[0-2])(?!\d)"
     )
     for match in numeric.finditer(value):
         if match.group(1) is not None:
