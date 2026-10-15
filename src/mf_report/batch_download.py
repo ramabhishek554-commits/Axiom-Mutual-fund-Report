@@ -65,6 +65,7 @@ def download_candidates_zip(
                         "fund_house_hint": candidate.get("fund_house_hint", "Unknown — verify manually"),
                         "label": label,
                         "source_url": url,
+                        "final_url": download_record.get("url", url),
                         "archive_file": archive_name,
                         "bytes": file_size,
                         "sha256": download_record.get("sha256", ""),
